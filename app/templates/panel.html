@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block titulo %}Panel | FaceGuard UMB{% endblock %}
+{% block contenido %}
+<h1>Panel de monitoreo</h1>
+
+{% if alertas %}
+<section class="alertas">
+  <h2>Alertas abiertas</h2>
+  <ul>
+    {% for a in alertas %}
+    <li>
+      <strong>{{ a.tipo_arma }}</strong>
+      confianza {{ '%.2f'|format(a.confianza) }}
+      <time>{{ a.fecha_hora }}</time>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% else %}
+<p class="vacio">No hay alertas abiertas.</p>
+{% endif %}
+
+<section>
+  <h2>Ultimos accesos</h2>
+  {% if accesos %}
+  <table>
+    <thead>
+      <tr><th>Fecha y hora</th><th>Estudiante</th><th>Codigo</th>
+          <th>Evento</th><th>Punto</th><th>Confianza</th></tr>
+    </thead>
+    <tbody>
+      {% for r in accesos %}
+      <tr>
+        <td>{{ r.fecha_hora }}</td>
+        <td>{{ r.nombres }} {{ r.apellidos }}</td>
+        <td>{{ r.codigo }}</td>
+        <td><span class="evento {{ r.tipo_evento }}">{{ r.tipo_evento }}</span></td>
+        <td>{{ r.punto_acceso }}</td>
+        <td>{{ '%.2f'|format(r.confianza) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="vacio">Todavia no hay registros de acceso.</p>
+  {% endif %}
+</section>
+{% endblock %}

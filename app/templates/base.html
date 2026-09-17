@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}FaceGuard UMB{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/estilo.css') }}">
+</head>
+<body>
+  {% if usuario %}
+  <header class="barra">
+    <span class="marca">FaceGuard <strong>UMB</strong></span>
+    <nav>
+      <a href="{{ url_for('web.panel') }}">Panel</a>
+      <a href="{{ url_for('web.registros') }}">Registros</a>
+    </nav>
+    <span class="usuario">{{ usuario.nombre }} <em>{{ usuario.rol }}</em>
+      <a href="{{ url_for('web.logout') }}">Salir</a>
+    </span>
+  </header>
+  {% endif %}
+
+  <main>
+    {% with mensajes = get_flashed_messages(with_categories=true) %}
+      {% for categoria, mensaje in mensajes %}
+        <p class="aviso {{ categoria }}">{{ mensaje }}</p>
+      {% endfor %}
+    {% endwith %}
+
+    {% block contenido %}{% endblock %}
+  </main>
+
+  <footer>
+    <p>Universidad Manuela Beltran, Ingenieria de Software. Prototipo academico.</p>
+  </footer>
+</body>
+</html>

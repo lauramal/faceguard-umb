@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block titulo %}Ingreso | FaceGuard UMB{% endblock %}
+{% block contenido %}
+<section class="acceso">
+  <h1>FaceGuard <strong>UMB</strong></h1>
+  <p class="sub">Panel de control de acceso</p>
+  <form method="post">
+    <label for="correo">Correo institucional</label>
+    <input id="correo" name="correo" type="email" required autocomplete="username">
+
+    <label for="contrasena">Contrasena</label>
+    <input id="contrasena" name="contrasena" type="password" required autocomplete="current-password">
+
+    <button type="submit">Ingresar</button>
+  </form>
+</section>
+{% endblock %}

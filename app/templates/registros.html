@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block titulo %}Registros | FaceGuard UMB{% endblock %}
+{% block contenido %}
+<h1>Historial de accesos</h1>
+
+<form class="filtros" method="get">
+  <label>Desde <input type="date" name="desde" value="{{ filtros.get('desde','') }}"></label>
+  <label>Hasta <input type="date" name="hasta" value="{{ filtros.get('hasta','') }}"></label>
+  <label>Punto de acceso
+    <select name="punto">
+      <option value="">Todos</option>
+      {% for p in puntos %}
+      <option value="{{ p.id }}" {% if filtros.get('punto')==p.id|string %}selected{% endif %}>{{ p.nombre }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Filtrar</button>
+</form>
+
+<p class="conteo">{{ accesos|length }} registros</p>
+
+<table>
+  <thead>
+    <tr><th>Fecha y hora</th><th>Estudiante</th><th>Codigo</th>
+        <th>Evento</th><th>Punto</th><th>Confianza</th></tr>
+  </thead>
+  <tbody>
+    {% for r in accesos %}
+    <tr>
+      <td>{{ r.fecha_hora }}</td>
+      <td>{{ r.nombres }} {{ r.apellidos }}</td>
+      <td>{{ r.codigo }}</td>
+      <td><span class="evento {{ r.tipo_evento }}">{{ r.tipo_evento }}</span></td>
+      <td>{{ r.punto_acceso }}</td>
+      <td>{{ '%.2f'|format(r.confianza) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
