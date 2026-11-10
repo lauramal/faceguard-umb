@@ -8,3 +8,5 @@ venv/
 modelos/*.pt
 capturas/
 *.log
+
+modelos/*.pt
