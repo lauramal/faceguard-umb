@@ -1,54 +1,59 @@
-"""Crea un usuario del panel con su contrasena hasheada.
+"""Crea un usuario del sistema con su rol (CU-07).
 
 Uso:
-    python scripts/crear_usuario.py "Nombre Apellido" correo@umb.edu.co guardia
-
-La contrasena se pide por consola y no queda en el historial de comandos ni
-se almacena en claro en ningun momento.
+    python scripts/crear_usuario.py --nombre "Ana Ruiz" \
+        --correo ana@institucion.edu --rol administrador
 """
 
 from __future__ import annotations
 
+import argparse
 import getpass
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.db import consultar, inicializar_pool  # noqa: E402
-from app.seguridad import hashear  # noqa: E402
+from app import repositorio          # noqa: E402
+from app.db import consultar, inicializar_pool   # noqa: E402
+from app.seguridad import hashear    # noqa: E402
 
-ROLES = ("administrador", "guardia", "consulta")
+
+def argumentos():
+    parser = argparse.ArgumentParser(description="Alta de usuario del sistema")
+    parser.add_argument("--nombre", required=True)
+    parser.add_argument("--correo", required=True)
+    parser.add_argument("--rol", required=True,
+                        choices=("administrador", "guardia", "consulta"))
+    return parser.parse_args()
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
-        print(__doc__)
+    args = argumentos()
+    inicializar_pool()
+
+    if repositorio.obtener_usuario_por_correo(args.correo):
+        print(f"Ya existe un usuario con el correo {args.correo}")
         return 1
 
-    nombre, correo, rol = sys.argv[1], sys.argv[2], sys.argv[3]
-    if rol not in ROLES:
-        print(f"El rol debe ser uno de: {', '.join(ROLES)}")
+    filas = consultar("SELECT id FROM rol WHERE nombre = %s", (args.rol,))
+    if not filas:
+        print(f"El rol {args.rol} no existe en la base de datos")
         return 1
 
     contrasena = getpass.getpass("Contrasena: ")
-    if len(contrasena) < 8:
-        print("La contrasena debe tener al menos 8 caracteres")
-        return 1
     if contrasena != getpass.getpass("Confirme la contrasena: "):
         print("Las contrasenas no coinciden")
         return 1
+    if len(contrasena) < 8:
+        print("La contrasena debe tener al menos 8 caracteres")
+        return 1
 
-    inicializar_pool()
-    filas = consultar(
-        """
-        INSERT INTO usuario (nombre, correo, contrasena_hash, rol_id)
-        VALUES (%s, %s, %s, (SELECT id FROM rol WHERE nombre = %s))
-        RETURNING id
-        """,
-        (nombre, correo, hashear(contrasena), rol),
+    usuario_id = repositorio.crear_usuario(
+        nombre=args.nombre, correo=args.correo,
+        contrasena_hash=hashear(contrasena), rol_id=filas[0]["id"],
     )
-    print(f"Usuario creado con id {filas[0]['id']}")
+    print(f"Usuario {usuario_id} creado con rol {args.rol}.")
     return 0
 
 

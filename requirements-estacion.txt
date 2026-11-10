@@ -1,0 +1,10 @@
+# Dependencias de la ESTACION DE CAPTURA, que corre en el equipo del punto
+# de acceso y no en el servidor. Aqui si viven los modelos pesados.
+
+-r requirements.txt
+
+opencv-python==4.10.0.84
+face_recognition==1.3.0
+dlib==19.24.4
+ultralytics==8.2.0
+requests==2.32.3

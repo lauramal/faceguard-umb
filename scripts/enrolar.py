@@ -1,14 +1,15 @@
-"""Enrolamiento facial de un estudiante desde la camara del equipo (CU-01).
+"""Enrolamiento facial de una persona (CU-01).
+
+Captura varias fotos desde la camara local, calcula sus codificaciones y las
+promedia antes de guardarlas. Nunca se almacena la fotografia.
 
 Uso:
-    python scripts/enrolar.py 202012345
-
-Toma cinco capturas espaciadas, calcula la codificacion de cada una, promedia
-las validas y guarda el vector resultante. Las imagenes no se almacenan.
+    python scripts/enrolar.py --documento 1001 --capturas 5
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -17,73 +18,85 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2  # noqa: E402
 
-from app.db import inicializar_pool  # noqa: E402
-from app import repositorio  # noqa: E402
-from app.servicios.reconocimiento_facial import (  # noqa: E402
-    RostroNoDetectado,
-    VariosRostros,
-    codificar_rostro,
-    promediar_codificaciones,
+from app import repositorio                                  # noqa: E402
+from app.db import inicializar_pool                          # noqa: E402
+from app.servicios.reconocimiento_facial import (            # noqa: E402
+    RostroNoDetectado, VariosRostros, codificar_rostro, promediar_codificaciones,
 )
 
-CAPTURAS = 5
-PAUSA_SEGUNDOS = 1.5
+
+def argumentos():
+    parser = argparse.ArgumentParser(description="Enrolamiento facial")
+    parser.add_argument("--documento", required=True)
+    parser.add_argument("--institucion", type=int, default=1)
+    parser.add_argument("--capturas", type=int, default=5)
+    parser.add_argument("--dispositivo", type=int, default=0)
+    return parser.parse_args()
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(__doc__)
-        return 1
-
-    codigo = sys.argv[1]
-
+    args = argumentos()
     inicializar_pool()
-    estudiante = repositorio.obtener_estudiante_por_codigo(codigo)
-    if estudiante is None:
-        print(f"No existe un estudiante con codigo {codigo}")
-        return 1
-    if not estudiante["consentimiento_firmado"]:
-        print("El estudiante no ha firmado el consentimiento informado")
-        return 1
 
-    camara = cv2.VideoCapture(0)
+    persona = repositorio.obtener_persona_por_documento(args.institucion, args.documento)
+    if persona is None:
+        print(f"No existe una persona con documento {args.documento}")
+        return 1
+    if not persona["autoriza_biometria"]:
+        print(f"{persona['nombres']} {persona['apellidos']} no autorizo el "
+              "tratamiento de sus datos biometricos.")
+        print("Puede ingresar con su credencial institucional.")
+        return 2
+
+    camara = cv2.VideoCapture(args.dispositivo)
     if not camara.isOpened():
         print("No se pudo abrir la camara")
         return 1
 
-    print(f"Enrolando a {estudiante['nombres']} {estudiante['apellidos']}")
-    print("Mire a la camara y cambie levemente el angulo entre capturas.")
+    print(f"Enrolando a {persona['nombres']} {persona['apellidos']}.")
+    print("Mire a la camara y cambie levemente de angulo entre capturas.")
 
     codificaciones = []
     try:
-        for i in range(1, CAPTURAS + 1):
-            time.sleep(PAUSA_SEGUNDOS)
+        while len(codificaciones) < args.capturas:
             ok, fotograma = camara.read()
             if not ok:
-                print(f"  captura {i}: no se pudo leer el fotograma")
-                continue
+                break
+            cv2.putText(fotograma, f"Captura {len(codificaciones) + 1}/{args.capturas}"
+                        " - espacio para tomar, q para salir", (12, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 0), 2)
+            cv2.imshow("FaceGuard - enrolamiento", fotograma)
 
-            rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
-            try:
-                codificaciones.append(codificar_rostro(rgb))
-                print(f"  captura {i}: correcta")
-            except RostroNoDetectado:
-                print(f"  captura {i}: no se detecto rostro")
-            except VariosRostros:
-                print(f"  captura {i}: hay mas de una persona en cuadro")
+            tecla = cv2.waitKey(1) & 0xFF
+            if tecla == ord("q"):
+                print("Enrolamiento cancelado")
+                return 1
+            if tecla == ord(" "):
+                rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+                try:
+                    codificaciones.append(codificar_rostro(rgb, estricto=True))
+                    print(f"  captura {len(codificaciones)} tomada")
+                except RostroNoDetectado:
+                    print("  no se detecto ningun rostro, intente de nuevo")
+                except VariosRostros:
+                    print("  hay mas de una persona en el encuadre")
+                time.sleep(0.3)
     finally:
         camara.release()
+        cv2.destroyAllWindows()
 
     if not codificaciones:
-        print("No se obtuvo ninguna codificacion valida")
+        print("No se tomo ninguna captura valida")
         return 1
 
     vector = promediar_codificaciones(codificaciones)
-    codificacion_id = repositorio.guardar_codificacion(estudiante["id"], vector)
-    print(
-        f"Codificacion {codificacion_id} guardada a partir de "
-        f"{len(codificaciones)} de {CAPTURAS} capturas"
+    codificacion_id = repositorio.guardar_codificacion(persona["id"], vector)
+    repositorio.registrar_auditoria(
+        None, "enrolar_persona", "persona", persona["id"],
+        f"{len(codificaciones)} capturas desde script",
     )
+    print(f"Codificacion {codificacion_id} guardada a partir de "
+          f"{len(codificaciones)} capturas.")
     return 0
 
 

@@ -14,7 +14,7 @@ from flask import (
 )
 
 from . import repositorio
-from .seguridad import autenticar, requiere_sesion
+from .seguridad import autenticar, cerrar_sesion, iniciar_sesion, requiere_sesion
 
 bp = Blueprint("web", __name__)
 
@@ -35,9 +35,7 @@ def login():
             flash("Correo o contrasena incorrectos", "error")
             return render_template("login.html"), 401
 
-        session["usuario_id"] = usuario["id"]
-        session["usuario_nombre"] = usuario["nombre"]
-        session["usuario_rol"] = usuario["rol"]
+        iniciar_sesion(usuario)
         return redirect(url_for("web.panel"))
 
     return render_template("login.html")
@@ -45,7 +43,7 @@ def login():
 
 @bp.get("/logout")
 def logout():
-    session.clear()
+    cerrar_sesion()
     return redirect(url_for("web.login"))
 
 
@@ -57,7 +55,7 @@ def panel():
         "panel.html",
         usuario=g.usuario,
         accesos=repositorio.listar_accesos(limite=20),
-        alertas=repositorio.listar_alertas(estado="generada"),
+        alertas=repositorio.listar_alertas(estado="notificada"),
     )
 
 

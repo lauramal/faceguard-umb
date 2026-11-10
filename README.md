@@ -1,161 +1,131 @@
-# FaceGuard UMB
+# FaceGuard
 
-Sistema web de seguridad para el reconocimiento facial de estudiantes y detección de armas basado en inteligencia artificial en la Universidad Manuela Beltrán.
+Sistema web de seguridad para la identificación facial de las personas que
+ingresan y la detección de armas visibles o empuñadas en los puntos de acceso
+de una institución de educación superior.
 
-Trabajo de grado, Ingeniería de Software modalidad virtual.
-Autora: Laura Valentina Maldonado Pérez.
-Asesora disciplinar: Luisa Graciela Arciniegas Zamora.
+Trabajo de grado de Ingeniería de Software. El aporte no está en el
+reconocimiento facial, que ya existe y se consigue comercialmente, sino en
+**integrar en un mismo punto quién entra, si lleva un arma a la vista, y dejar
+ambos hechos unidos en un registro consultable**.
 
-## El problema
-
-El control de acceso universitario valida credenciales, no identidades. Un carné leído confirma que alguien presentó una tarjeta válida, no que quien la presentó sea su titular, y ningún control vigente advierte si esa persona ingresa portando un arma.
-
-FaceGuard UMB no reemplaza al personal de seguridad. Le entrega información verificable en el momento en que la necesita. Cuando el sistema no alcanza la confianza mínima para identificar a alguien, no adivina: reporta el intento y deja la verificación al guardia.
-
-## Estado del proyecto
-
-| Sprint | Alcance | Estado |
-|---|---|---|
-| 0 y 1 | Diagnóstico, arquitectura, modelo de datos y diagramas UML | Completado |
-| 2 | Módulo de reconocimiento facial integrado al backend | En curso |
-| 3 y 4 | Módulo de detección de armas y plataforma web de consulta | Pendiente |
-| 5 | Pruebas, métricas de desempeño e informe de evaluación | Pendiente |
+---
 
 ## Arquitectura
 
-```
-Estación de captura (OpenCV)
-        │  fotograma
-        ▼
-Backend Flask ──► servicios/reconocimiento_facial.py  (face_recognition + dlib)
-        │     └─► servicios/deteccion_armas.py        (YOLOv8, sprint 3)
-        │
-        ▼
-repositorio.py ──► PostgreSQL en Supabase
-        │
-        ▼
-Plataforma web de consulta (panel y registros)
-```
+El sistema se reparte en dos equipos, y esa división no es casual.
 
-La decisión de diseño que sostiene todo lo demás es la separación entre la comparación de codificaciones, que es aritmética pura sobre numpy, y la extracción de la codificación, que sí necesita dlib. Esa frontera permite probar la lógica de identificación sin cámara ni GPU.
+| Dónde | Qué corre | Por qué |
+|---|---|---|
+| **Estación de captura** (equipo del punto de acceso) | OpenCV, `face_recognition` (dlib), YOLOv8 | Son las librerías pesadas. Además, así las imágenes de los rostros nunca salen del equipo local |
+| **Servidor de aplicación** (plan gratuito) | Flask, numpy, psycopg2 | Solo compara vectores de 128 números y escribe en la base. Cabe en 512 MB de RAM |
+| **Supabase** | PostgreSQL y almacenamiento | Base de datos y evidencias |
 
-## Puesta en marcha
+La estación calcula el *embedding* facial y envía al servidor únicamente ese
+vector. Es lo que exige el RNF-11 y lo que refuerza la minimización de datos
+frente a la Ley 1581 de 2012.
 
-Requiere Python 3.10 o superior y PostgreSQL 15. Para el reconocimiento facial hace falta compilar dlib, que en macOS necesita `cmake`.
+---
+
+## Instalación
+
+### Servidor de aplicación
 
 ```bash
-git clone https://github.com/lauramal/faceguard-umb.git
-cd faceguard-umb
-
-python -m venv .venv
-source .venv/bin/activate          # en Windows: .venv\Scripts\activate
-
 pip install -r requirements.txt
-
-cp .env.example .env                # complete DATABASE_URL y SECRET_KEY
-```
-
-Cree el esquema en Supabase:
-
-```bash
+cp .env.example .env          # y complete DATABASE_URL y SECRET_KEY
 psql "$DATABASE_URL" -f db/schema.sql
-psql "$DATABASE_URL" -f db/datos_prueba.sql
-```
-
-Cree el primer usuario administrador y levante el servidor:
-
-```bash
-python scripts/crear_usuario.py "Laura Maldonado" laura@umb.edu.co administrador
 python run.py
 ```
 
-El panel queda en `http://localhost:5000`.
-
-## Uso
-
-**Enrolar a un estudiante.** Requiere que el consentimiento informado esté firmado, porque sin él la aplicación se niega a procesar la imagen.
+### Estación de captura
 
 ```bash
-python scripts/enrolar.py 202012345
+pip install -r requirements-estacion.txt
+python scripts/estacion_acceso.py 1 --api https://su-servidor/
 ```
 
-**Levantar un punto de acceso.**
+> `requirements.txt` **no** incluye dlib ni Ultralytics a propósito. Instalarlos
+> en el servidor agota la memoria del plan gratuito.
 
-```bash
-python scripts/estacion_acceso.py 1
-```
-
-## API
-
-| Método | Ruta | Descripción | Rol |
-|---|---|---|---|
-| GET | `/salud` | Estado del servicio | público |
-| POST | `/api/accesos/identificar` | Procesa un fotograma y registra el evento | estación |
-| GET | `/api/accesos` | Historial con filtros de fecha, estudiante y punto | todos |
-| GET | `/api/estudiantes` | Listado de estudiantes | todos |
-| POST | `/api/estudiantes` | Crea un estudiante | administrador |
-| POST | `/api/estudiantes/<id>/enrolar` | Registra la codificación facial | administrador |
-| GET | `/api/alertas` | Alertas de armas | todos |
-| POST | `/api/alertas/<id>/cerrar` | Cierra una alerta con trazabilidad | administrador, guardia |
-
-Ejemplo de respuesta de `/api/accesos/identificar`:
-
-```json
-{
-  "identificado": true,
-  "estudiante_id": 12,
-  "nombre": "Laura Valentina Maldonado Pérez",
-  "tipo_evento": "ingreso",
-  "confianza": 0.9412,
-  "registro_id": 337,
-  "milisegundos": 412.6
-}
-```
-
-Cuando la confianza no alcanza el umbral:
-
-```json
-{
-  "identificado": false,
-  "confianza": 0.71,
-  "motivo": "confianza_insuficiente"
-}
-```
-
-## Pruebas
-
-```bash
-python -m pytest -q
-```
-
-Las pruebas cubren la lógica de comparación de codificaciones, la alternancia entre ingreso y salida, el rechazo de rostros desconocidos y el control de acceso por roles en los endpoints. No requieren dlib, cámara ni base de datos.
-
-## Tratamiento de datos personales
-
-Los datos biométricos son datos sensibles según la Ley 1581 de 2012. El sistema aplica estas medidas:
-
-- Solo se almacena la codificación de 128 dimensiones, nunca la fotografía original
-- El enrolamiento se rechaza si el consentimiento informado no está firmado
-- Las contraseñas se guardan con PBKDF2 y sal aleatoria
-- El acceso a la información está restringido por roles
-- Ninguna credencial vive en el repositorio; todo se lee de variables de entorno
+---
 
 ## Estructura
 
 ```
 app/
-  servicios/reconocimiento_facial.py   codificación e identificación
-  servicios/control_acceso.py          orquestación del proceso P2
-  servicios/deteccion_armas.py         interfaz de YOLOv8, sprint 3
-  api/                                 endpoints REST
-  web.py                               plataforma web de consulta
-  repositorio.py                       capa de acceso a datos
-  seguridad.py                         autenticación y roles
-db/schema.sql                          script de la base de datos
-scripts/                               enrolamiento y estación de acceso
-tests/                                 pruebas unitarias
+  api/            endpoints REST (auth, personas, accesos, alertas, cámaras,
+                  usuarios, reportes)
+  servicios/      lógica de dominio
+    reconocimiento_facial.py   codificación y comparación de rostros
+    control_acceso.py          ingreso/salida, antirrebote, no identificados
+    deteccion_armas.py         envoltorio de YOLOv8
+    alertas.py                 máquina de estados y escalamiento
+  repositorio.py  única capa que escribe SQL
+  seguridad.py    autenticación, roles, bloqueo de cuentas
+  db.py           pool de conexiones
+db/schema.sql     esquema completo con sus restricciones
+scripts/          enrolamiento, alta de usuarios, estación de captura
+tests/            suite de pruebas
 ```
 
-## Licencia
+---
 
-Proyecto académico sin fines comerciales.
+## Pruebas
+
+```bash
+pytest                        # unitarias, con cobertura
+TEST_DATABASE_URL=postgresql://... pytest    # añade las de integración
+```
+
+La suite tiene **210 pruebas** y **89 % de cobertura**. Las de integración
+ejecutan el esquema real sobre PostgreSQL y verifican que las restricciones de
+la base se comporten como afirma el documento.
+
+Lo que cubre la caja blanca:
+
+- el rostro se acepta o se rechaza según el umbral de distancia
+- el sistema distingue ingreso de salida y no repite eventos dentro de la ventana
+- la alerta no se salta estados de su ciclo de vida
+- la alerta sube al administrador cuando nadie la atiende
+- cada rol hace solo lo que le corresponde
+- no se almacena ningún rostro sin consentimiento
+- los datos biométricos se borran al retirar a la persona
+- las contraseñas se guardan con PBKDF2 y sal aleatoria
+
+---
+
+## Decisiones que conviene conocer
+
+**La identidad se decide sobre la distancia, no sobre la confianza.** Dos fotos
+de la misma persona distan entre 0.30 y 0.55; dos personas distintas, más de
+0.60. Ese 0.60 es el umbral. La confianza es una lectura normalizada que se
+guarda para el reporte. El 85 % de la hipótesis es la precisión global del
+sistema sobre el conjunto de pruebas, no un piso de confianza por comparación.
+
+**Los eventos no identificados se guardan.** `registro_acceso.persona_id`
+admite nulo, con una restricción que impide declarar identificado a un evento
+sin señalar a quién. El sistema no adivina, pero tampoco olvida: el guardia
+verifica después.
+
+**La alerta conoce a la persona.** `alerta_arma` referencia al evento de acceso
+y a la persona, que es lo que permite responder quién portaba el arma y no solo
+dónde fue detectada.
+
+**Quien no autoriza su rostro sigue entrando.** Con `metodo = 'credencial'` se
+produce el mismo registro. Nadie queda fuera del historial por ejercer su
+derecho.
+
+---
+
+## Alcance y limitaciones
+
+- La cámara **solo ve lo que está a la vista**. Un arma dentro de un bolso o
+  bajo la ropa no se detecta, y así se declara.
+- Las armas blancas son considerablemente más difíciles de detectar que las de
+  fuego.
+- Las cifras de la literatura provienen de condiciones de laboratorio. El
+  desempeño real depende de la resolución de la cámara y de la iluminación, por
+  eso el RNF-14 fija un mínimo de 1280 x 720 y 200 lux.
+- El servidor en plan gratuito se suspende por inactividad, de modo que el
+  arranque en frío puede tardar cerca de un minuto.

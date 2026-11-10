@@ -1,120 +1,129 @@
-"""Pruebas del proceso P2, registro de ingreso y salida.
+"""Caja blanca del control de acceso.
 
-Se usa un repositorio falso en memoria y se sustituye la codificacion del
-rostro, de modo que la prueba ejercita la logica de decision del servicio sin
-camara ni base de datos.
+Cubre tres pruebas de la asesoria: distinguir ingreso de salida, registrar a
+las personas no identificadas y el ingreso con credencial de quien no
+autoriza su rostro.
 """
 
-import numpy as np
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
 import pytest
 
-from app.servicios import control_acceso
-from app.servicios.control_acceso import _siguiente_evento, procesar_fotograma
-from app.servicios.reconocimiento_facial import DIMENSIONES, Candidato, RostroNoDetectado
+from app.config import Config
+from app.servicios.control_acceso import (
+    es_rebote, registrar_con_credencial, siguiente_evento,
+)
 
 
-class RepositorioFalso:
-    def __init__(self, catalogo, estudiantes, ultimo=None):
-        self._catalogo = catalogo
-        self._estudiantes = estudiantes
-        self._ultimo = ultimo
-        self.registros = []
+class TestIngresoOSalida:
+    """El sistema alterna el tipo de evento segun el ultimo registro."""
 
-    def cargar_catalogo(self):
-        return self._catalogo
+    def test_sin_registro_previo_es_ingreso(self):
+        assert siguiente_evento(None) == "ingreso"
 
-    def obtener_estudiante(self, estudiante_id):
-        return self._estudiantes.get(estudiante_id)
+    def test_despues_de_un_ingreso_viene_una_salida(self):
+        assert siguiente_evento("ingreso") == "salida"
 
-    def ultimo_evento(self, estudiante_id):
-        return self._ultimo
+    def test_despues_de_una_salida_viene_un_ingreso(self):
+        assert siguiente_evento("salida") == "ingreso"
 
-    def registrar_acceso(self, estudiante_id, punto_acceso_id, tipo_evento, confianza):
-        self.registros.append(
-            {
-                "estudiante_id": estudiante_id,
-                "punto_acceso_id": punto_acceso_id,
-                "tipo_evento": tipo_evento,
-                "confianza": confianza,
-            }
+    def test_la_alternancia_se_sostiene_en_el_tiempo(self):
+        tipo, secuencia = None, []
+        for _ in range(4):
+            tipo = siguiente_evento(tipo)
+            secuencia.append(tipo)
+        assert secuencia == ["ingreso", "salida", "ingreso", "salida"]
+
+
+class TestAntirrebote:
+    """Una persona parada frente a la camara no genera un registro por frame."""
+
+    def test_evento_reciente_es_rebote(self):
+        ultimo = {"fecha_hora": datetime.now() - timedelta(seconds=2),
+                  "tipo_evento": "ingreso", "id": 1}
+        assert es_rebote(ultimo)
+
+    def test_evento_antiguo_no_es_rebote(self):
+        ultimo = {"fecha_hora": datetime.now()
+                  - timedelta(seconds=Config.VENTANA_ANTIREBOTE + 5),
+                  "tipo_evento": "ingreso", "id": 1}
+        assert not es_rebote(ultimo)
+
+    def test_sin_registro_previo_no_es_rebote(self):
+        assert not es_rebote(None)
+
+    def test_el_limite_de_la_ventana_no_es_rebote(self):
+        ultimo = {"fecha_hora": datetime.now()
+                  - timedelta(seconds=Config.VENTANA_ANTIREBOTE),
+                  "tipo_evento": "ingreso", "id": 1}
+        assert not es_rebote(ultimo)
+
+
+class TestEventosNoIdentificados:
+    """El sistema no adivina, pero tampoco olvida."""
+
+    def test_el_repositorio_guarda_el_evento_sin_persona(self, repo):
+        rid = repo.registrar_acceso(
+            punto_acceso_id=1, tipo_evento="ingreso",
+            resultado="no_identificado", imagen_url="s3://ev/1.jpg",
         )
-        return len(self.registros)
+        assert rid is not None
+        guardado = repo.listar_accesos(resultado="no_identificado")[0]
+        assert guardado["persona_id"] is None
+        assert guardado["imagen_url"] == "s3://ev/1.jpg"
+
+    def test_no_se_puede_declarar_identificado_sin_persona(self, repo):
+        with pytest.raises(ValueError):
+            repo.registrar_acceso(
+                punto_acceso_id=1, tipo_evento="ingreso", resultado="identificado"
+            )
+
+    def test_el_guardia_verifica_y_asocia_a_la_persona(self, repo):
+        pid = repo.crear_persona(nombres="Ana", apellidos="Ruiz", estado="activo")
+        rid = repo.registrar_acceso(
+            punto_acceso_id=1, tipo_evento="ingreso", resultado="no_identificado"
+        )
+        assert repo.verificar_acceso_manual(rid, usuario_id=9,
+                                            persona_id=pid, aprobado=True) == 1
+        registro = repo.listar_accesos()[0]
+        assert registro["resultado"] == "verificado_manual"
+        assert registro["persona_id"] == pid
+        assert registro["verificado_por"] == 9
+
+    def test_no_se_verifica_dos_veces(self, repo):
+        rid = repo.registrar_acceso(
+            punto_acceso_id=1, tipo_evento="ingreso", resultado="no_identificado"
+        )
+        repo.verificar_acceso_manual(rid, 9, None, True)
+        assert repo.verificar_acceso_manual(rid, 9, None, True) == 0
 
 
-ROSTRO = np.linspace(0, 1, DIMENSIONES)
+class TestIngresoConCredencial:
+    """Quien no autoriza su rostro conserva el derecho a entrar."""
 
-ESTUDIANTES = {
-    1: {"id": 1, "nombres": "Laura Valentina", "apellidos": "Maldonado Perez"},
-}
+    def test_genera_el_mismo_registro_sin_biometria(self, repo):
+        pid = repo.crear_persona(nombres="Luis", apellidos="Gomez",
+                                 estado="activo", autoriza_biometria=False)
+        resultado = registrar_con_credencial(pid, 1, repositorio=repo)
 
+        assert resultado.identificado
+        assert resultado.metodo == "credencial"
+        assert resultado.tipo_evento == "ingreso"
+        assert resultado.distancia is None
 
-@pytest.fixture
-def rostro_conocido(monkeypatch):
-    monkeypatch.setattr(control_acceso, "codificar_rostro", lambda img, estricto=True: ROSTRO)
+    def test_tambien_alterna_ingreso_y_salida(self, repo):
+        pid = repo.crear_persona(estado="activo")
+        repo.registrar_acceso(
+            punto_acceso_id=1, persona_id=pid, tipo_evento="ingreso",
+            resultado="identificado", metodo="credencial",
+            fecha_hora=datetime.now() - timedelta(minutes=10),
+        )
+        resultado = registrar_con_credencial(pid, 1, repositorio=repo)
+        assert resultado.tipo_evento == "salida"
 
-
-def test_primer_evento_es_ingreso():
-    assert _siguiente_evento(None) == "ingreso"
-
-
-def test_despues_de_un_ingreso_viene_una_salida():
-    assert _siguiente_evento("ingreso") == "salida"
-
-
-def test_despues_de_una_salida_viene_un_ingreso():
-    assert _siguiente_evento("salida") == "ingreso"
-
-
-def test_registra_el_ingreso_de_un_estudiante_conocido(rostro_conocido):
-    repo = RepositorioFalso([Candidato(1, ROSTRO)], ESTUDIANTES)
-
-    resultado = procesar_fotograma(np.zeros((10, 10, 3)), punto_acceso_id=1, repositorio=repo)
-
-    assert resultado.identificado
-    assert resultado.estudiante_id == 1
-    assert resultado.tipo_evento == "ingreso"
-    assert resultado.confianza == pytest.approx(1.0)
-    assert len(repo.registros) == 1
-
-
-def test_alterna_a_salida_cuando_ya_habia_un_ingreso(rostro_conocido):
-    repo = RepositorioFalso([Candidato(1, ROSTRO)], ESTUDIANTES, ultimo="ingreso")
-
-    resultado = procesar_fotograma(np.zeros((10, 10, 3)), punto_acceso_id=1, repositorio=repo)
-
-    assert resultado.tipo_evento == "salida"
-
-
-def test_no_registra_nada_cuando_no_identifica(rostro_conocido):
-    """Un rostro desconocido no debe generar registro de acceso."""
-    repo = RepositorioFalso([Candidato(9, np.ones(DIMENSIONES) * 5)], ESTUDIANTES)
-
-    resultado = procesar_fotograma(np.zeros((10, 10, 3)), punto_acceso_id=1, repositorio=repo)
-
-    assert not resultado.identificado
-    assert resultado.motivo == "confianza_insuficiente"
-    assert repo.registros == []
-
-
-def test_fotograma_sin_rostro(monkeypatch):
-    def sin_rostro(img, estricto=True):
-        raise RostroNoDetectado()
-
-    monkeypatch.setattr(control_acceso, "codificar_rostro", sin_rostro)
-    repo = RepositorioFalso([], ESTUDIANTES)
-
-    resultado = procesar_fotograma(np.zeros((10, 10, 3)), punto_acceso_id=1, repositorio=repo)
-
-    assert not resultado.identificado
-    assert resultado.motivo == "sin_rostro"
-    assert repo.registros == []
-
-
-def test_mide_el_tiempo_de_respuesta(rostro_conocido):
-    """El RNF-01 fija un maximo de tres segundos por identificacion."""
-    repo = RepositorioFalso([Candidato(1, ROSTRO)], ESTUDIANTES)
-
-    resultado = procesar_fotograma(np.zeros((10, 10, 3)), punto_acceso_id=1, repositorio=repo)
-
-    assert resultado.milisegundos > 0
-    assert resultado.milisegundos < 3000
+    def test_persona_inexistente_no_registra(self, repo):
+        resultado = registrar_con_credencial(999, 1, repositorio=repo)
+        assert not resultado.identificado
+        assert resultado.motivo == "persona_inexistente"

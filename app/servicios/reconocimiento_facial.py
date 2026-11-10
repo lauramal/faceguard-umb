@@ -1,4 +1,4 @@
-"""Modulo de reconocimiento facial de FaceGuard UMB.
+"""Modulo de reconocimiento facial de FaceGuard.
 
 Cubre el objetivo especifico 3 del trabajo de grado. Se apoya en la libreria
 face_recognition (construida sobre dlib) para obtener la codificacion de 128
@@ -8,6 +8,18 @@ codificacion contra el catalogo almacenado en la base de datos.
 La comparacion se implementa con numpy y no depende de dlib, de manera que
 puede probarse de forma aislada. Esa separacion responde al RNF-08, que exige
 una arquitectura modular.
+
+Sobre el criterio de decision
+-----------------------------
+La identidad se decide sobre la DISTANCIA euclidiana entre codificaciones.
+Dos fotografias de la misma persona suelen quedar entre 0.30 y 0.55; dos
+personas distintas, por encima de 0.60. Ese 0.60 es el umbral de referencia
+que recomiendan los autores de dlib.
+
+La confianza es una lectura normalizada de la distancia, pensada para el
+reporte y para el panel del guardia. No es el criterio de corte. El 85 % que
+aparece en la hipotesis se refiere a la precision global del sistema medida
+sobre el conjunto de pruebas, no a la confianza exigida en cada comparacion.
 """
 
 from __future__ import annotations
@@ -21,22 +33,17 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 # Distancia euclidiana maxima admitida entre dos codificaciones para
-# considerarlas de la misma persona. 0.6 es el valor recomendado por los
-# autores de dlib y el que se usara como punto de partida en las pruebas.
+# considerarlas de la misma persona.
 UMBRAL_DISTANCIA = 0.6
-
-# Confianza minima para aceptar una identificacion y registrar el acceso.
-# Se corresponde con el umbral de 85 % planteado en la hipotesis.
-UMBRAL_CONFIANZA = 0.85
 
 DIMENSIONES = 128
 
 
 @dataclass(frozen=True)
 class Candidato:
-    """Codificacion facial de un estudiante ya enrolado."""
+    """Codificacion facial de una persona ya enrolada."""
 
-    estudiante_id: int
+    persona_id: int
     vector: np.ndarray
 
 
@@ -44,13 +51,13 @@ class Candidato:
 class Identificacion:
     """Resultado de comparar un rostro contra el catalogo."""
 
-    estudiante_id: Optional[int]
-    confianza: float
+    persona_id: Optional[int]
     distancia: float
+    confianza: float
 
     @property
     def identificado(self) -> bool:
-        return self.estudiante_id is not None
+        return self.persona_id is not None
 
 
 class RostroNoDetectado(Exception):
@@ -73,13 +80,24 @@ def _cargar_face_recognition():
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
             "face_recognition no esta instalado. Ejecute "
-            "pip install -r requirements.txt"
+            "pip install -r requirements-estacion.txt"
         ) from exc
     return face_recognition
 
 
+def _area(ubicacion) -> int:
+    """Area del recuadro (top, right, bottom, left) que devuelve dlib."""
+    arriba, derecha, abajo, izquierda = ubicacion
+    return max(0, abajo - arriba) * max(0, derecha - izquierda)
+
+
 def codificar_rostro(imagen_rgb: np.ndarray, *, estricto: bool = True) -> np.ndarray:
     """Devuelve la codificacion de 128 dimensiones del rostro de la imagen.
+
+    Cuando la imagen contiene varias caras y no se exige exclusividad, se
+    elige la de mayor area, que corresponde a la persona mas cercana a la
+    camara. Quedarse con la primera que devuelve dlib era un error, porque
+    ese orden es arbitrario y podia codificar a alguien del fondo.
 
     Args:
         imagen_rgb: arreglo de la imagen en formato RGB.
@@ -99,12 +117,13 @@ def codificar_rostro(imagen_rgb: np.ndarray, *, estricto: bool = True) -> np.nda
     if estricto and len(ubicaciones) > 1:
         raise VariosRostros(f"Se detectaron {len(ubicaciones)} rostros")
 
-    codificaciones = fr.face_encodings(imagen_rgb, ubicaciones[:1])
+    principal = max(ubicaciones, key=_area)
+    codificaciones = fr.face_encodings(imagen_rgb, [principal])
     return np.asarray(codificaciones[0], dtype=np.float64)
 
 
 def promediar_codificaciones(codificaciones: Sequence[np.ndarray]) -> np.ndarray:
-    """Combina varias capturas del mismo estudiante en una sola codificacion.
+    """Combina varias capturas de la misma persona en una sola codificacion.
 
     El enrolamiento toma varias fotos con distintos angulos e iluminacion. El
     promedio de sus codificaciones es mas estable frente a las variaciones que
@@ -120,16 +139,20 @@ def promediar_codificaciones(codificaciones: Sequence[np.ndarray]) -> np.ndarray
 
 def distancia(a: np.ndarray, b: np.ndarray) -> float:
     """Distancia euclidiana entre dos codificaciones."""
-    return float(np.linalg.norm(np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)))
+    return float(
+        np.linalg.norm(
+            np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
+        )
+    )
 
 
 def confianza_desde_distancia(dist: float, umbral: float = UMBRAL_DISTANCIA) -> float:
-    """Convierte una distancia en un valor de confianza entre 0 y 1.
+    """Convierte una distancia en un valor informativo entre 0 y 1.
 
-    Una distancia de cero equivale a confianza 1. Una distancia igual al
-    umbral equivale a confianza 0. El valor resultante es el que se guarda en
-    registro_acceso.confianza y el que se contrasta contra el umbral de la
-    hipotesis.
+    Una distancia de cero equivale a confianza 1 y una distancia igual al
+    umbral equivale a confianza 0. El valor se guarda en
+    registro_acceso.confianza y se muestra en el panel, pero la decision de
+    identidad se toma sobre la distancia, no sobre este numero.
     """
     if umbral <= 0:
         raise ValueError("El umbral debe ser mayor que cero")
@@ -140,16 +163,15 @@ def identificar(
     codificacion: np.ndarray,
     catalogo: Iterable[Candidato],
     *,
-    umbral_confianza: float = UMBRAL_CONFIANZA,
     umbral_distancia: float = UMBRAL_DISTANCIA,
 ) -> Identificacion:
     """Compara una codificacion contra el catalogo y devuelve el mejor match.
 
-    Implementa el nucleo del CU-02. Recorre las codificaciones almacenadas,
-    se queda con la de menor distancia y solo declara identificado al
-    estudiante si la confianza alcanza el umbral. Por debajo de ese valor el
-    evento se reporta como no identificado y queda para verificacion manual
-    del guardia, que es justamente el rol de apoyo que el sistema persigue.
+    Implementa el nucleo del CU-02. Recorre las codificaciones almacenadas, se
+    queda con la de menor distancia y declara identificada a la persona solo
+    si esa distancia queda por debajo del umbral. Por encima, el evento se
+    reporta como no identificado y pasa a verificacion manual del guardia, que
+    es el rol de apoyo humano que sostiene el proyecto.
     """
     codificacion = np.asarray(codificacion, dtype=np.float64)
     if codificacion.shape != (DIMENSIONES,):
@@ -162,19 +184,20 @@ def identificar(
         d = distancia(codificacion, candidato.vector)
         if d < mejor_distancia:
             mejor_distancia = d
-            mejor_id = candidato.estudiante_id
+            mejor_id = candidato.persona_id
 
     if mejor_id is None:
         log.warning("El catalogo de codificaciones esta vacio")
-        return Identificacion(None, 0.0, float("inf"))
+        return Identificacion(None, float("inf"), 0.0)
 
     conf = confianza_desde_distancia(mejor_distancia, umbral_distancia)
-    if conf < umbral_confianza:
-        log.info(
-            "Rostro no identificado, mejor confianza %.4f por debajo del umbral %.2f",
-            conf,
-            umbral_confianza,
-        )
-        return Identificacion(None, conf, mejor_distancia)
 
-    return Identificacion(mejor_id, conf, mejor_distancia)
+    if mejor_distancia > umbral_distancia:
+        log.info(
+            "Rostro no identificado, mejor distancia %.4f por encima del umbral %.2f",
+            mejor_distancia,
+            umbral_distancia,
+        )
+        return Identificacion(None, mejor_distancia, conf)
+
+    return Identificacion(mejor_id, mejor_distancia, conf)
