@@ -78,7 +78,7 @@ pytest                        # unitarias, con cobertura
 TEST_DATABASE_URL=postgresql://... pytest    # añade las de integración
 ```
 
-La suite tiene **210 pruebas** y **89 % de cobertura**. Las de integración
+La suite tiene **233 pruebas** y **92 % de cobertura**. Las de integración
 ejecutan el esquema real sobre PostgreSQL y verifican que las restricciones de
 la base se comporten como afirma el documento.
 
