@@ -70,17 +70,18 @@ def metricas_por_clase(modelo, data_yaml: str) -> dict:
     print(f"{'Clase':<22}{'Precision':>11}{'Exhaustiv.':>12}{'F1':>8}{'mAP50':>9}")
     print("-" * 62)
     for indice, clase in resultado.names.items():
-        p, r, _, _ = resultado.box.class_result(indice)
+        # class_result devuelve (precision, exhaustividad, AP50, AP50-95).
+        # box.maps es AP50-95 por clase: no se debe rotular como mAP50.
+        p, r, ap50, _ = resultado.box.class_result(indice)
         f1 = 2 * p * r / (p + r) if (p + r) else 0.0
         filas[clase] = {
             "tipo_en_el_sistema": traducir_etiqueta(clase),
             "precision": round(float(p), 4),
             "exhaustividad": round(float(r), 4),
             "f1": round(float(f1), 4),
-            "map50": round(float(resultado.box.maps[indice]), 4),
+            "map50": round(float(ap50), 4),
         }
-        print(f"{clase:<22}{p:>11.3f}{r:>12.3f}{f1:>8.3f}"
-              f"{resultado.box.maps[indice]:>9.3f}")
+        print(f"{clase:<22}{p:>11.3f}{r:>12.3f}{f1:>8.3f}{ap50:>9.3f}")
 
     print("-" * 62)
     print(f"{'Global (mAP50)':<22}{'':>11}{'':>12}{'':>8}{resultado.box.map50:>9.3f}")
