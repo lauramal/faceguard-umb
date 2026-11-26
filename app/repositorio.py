@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from .db import consultar, ejecutar
+from .db import consultar, cursor, ejecutar
 from .servicios.reconocimiento_facial import Candidato
 
 
@@ -225,6 +225,65 @@ def registrar_acceso(
     return filas[0]["id"]
 
 
+def registrar_acceso_unico(
+    punto_acceso_id: int,
+    tipo_evento: str,
+    persona_id: int,
+    ventana_segundos: int,
+    camara_id: Optional[int] = None,
+    metodo: str = "facial",
+    distancia: Optional[float] = None,
+    confianza: Optional[float] = None,
+) -> tuple[int, bool]:
+    """Registra el evento de una persona identificada sin duplicarlo.
+
+    La comprobacion de la ventana antirrebote y la insercion ocurren en la
+    misma transaccion, bajo un candado consultivo por persona. Asi, dos
+    fotogramas de la misma persona que llegan casi a la vez no producen dos
+    registros, cosa que una comprobacion previa por separado no garantiza.
+
+    Returns:
+        (id del registro, True si se creo) o (id del registro existente, False).
+    """
+    if tipo_evento not in ("ingreso", "salida"):
+        raise ValueError("tipo_evento debe ser 'ingreso' o 'salida'")
+    if metodo not in ("facial", "credencial", "manual"):
+        raise ValueError(f"metodo invalido: {metodo}")
+
+    with cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (4242, int(persona_id)))
+        cur.execute(
+            """
+            SELECT id FROM registro_acceso
+            WHERE persona_id = %s
+              AND fecha_hora > NOW() - (%s * INTERVAL '1 second')
+            ORDER BY fecha_hora DESC LIMIT 1
+            """,
+            (persona_id, ventana_segundos),
+        )
+        existente = cur.fetchone()
+        if existente:
+            return existente["id"], False
+        cur.execute(
+            """
+            INSERT INTO registro_acceso
+                (punto_acceso_id, camara_id, persona_id, tipo_evento, metodo,
+                 resultado, distancia, confianza)
+            VALUES (%s, %s, %s, %s, %s, 'identificado', %s, %s)
+            RETURNING id
+            """,
+            (punto_acceso_id, camara_id, persona_id, tipo_evento, metodo,
+             None if distancia is None else round(float(distancia), 4),
+             None if confianza is None else round(float(confianza), 4)),
+        )
+        return cur.fetchone()["id"], True
+
+
+def obtener_registro(registro_id: int) -> Optional[dict[str, Any]]:
+    filas = consultar("SELECT * FROM registro_acceso WHERE id = %s", (registro_id,))
+    return filas[0] if filas else None
+
+
 def verificar_acceso_manual(
     registro_id: int, usuario_id: int, persona_id: Optional[int], aprobado: bool
 ) -> int:
@@ -299,28 +358,78 @@ def crear_alerta(
     tipo_arma: str,
     confianza: float,
     registro_acceso_id: Optional[int] = None,
-    persona_id: Optional[int] = None,
+    persona_contexto_id: Optional[int] = None,
     imagen_url: Optional[str] = None,
 ) -> int:
-    """Crea la alerta unida al evento de acceso y a la persona.
+    """Crea la alerta unida al evento de acceso del mismo momento.
 
-    Esas dos referencias son el aporte central del trabajo: permiten
-    responder quien llevaba el arma, no solo donde fue detectada.
+    persona_contexto_id es la persona identificada en ese evento. Es contexto
+    para el guardia, no una atribucion: estar en el mismo fotograma que un
+    arma no prueba que la persona la porte. El portador solo se registra
+    cuando el guardia confirma la alerta (asignar_portador).
     """
     if tipo_arma not in ("arma_fuego", "arma_blanca", "indeterminada"):
         raise ValueError(f"tipo_arma invalido: {tipo_arma}")
     filas = consultar(
         """
         INSERT INTO alerta_arma
-            (camara_id, punto_acceso_id, registro_acceso_id, persona_id,
+            (camara_id, punto_acceso_id, registro_acceso_id, persona_contexto_id,
              tipo_arma, confianza, imagen_url)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (camara_id, punto_acceso_id, registro_acceso_id, persona_id,
+        (camara_id, punto_acceso_id, registro_acceso_id, persona_contexto_id,
          tipo_arma, round(float(confianza), 4), imagen_url),
     )
     return filas[0]["id"]
+
+
+def alerta_abierta_reciente(
+    camara_id: int, tipo_arma: str, segundos: int
+) -> Optional[dict[str, Any]]:
+    """Alerta abierta del mismo tipo en la misma camara, vista hace poco.
+
+    Es la que recibe las detecciones repetidas, para que una misma arma
+    frente a la camara no abra una alerta por fotograma.
+    """
+    filas = consultar(
+        """
+        SELECT * FROM alerta_arma
+        WHERE camara_id = %s AND tipo_arma = %s
+          AND estado IN ('generada', 'notificada', 'escalada', 'en_atencion')
+          AND ultima_deteccion > NOW() - (%s * INTERVAL '1 second')
+        ORDER BY ultima_deteccion DESC LIMIT 1
+        """,
+        (camara_id, tipo_arma, segundos),
+    )
+    return filas[0] if filas else None
+
+
+def sumar_deteccion(alerta_id: int, confianza: float) -> int:
+    """Suma una deteccion repetida a la alerta abierta."""
+    return ejecutar(
+        """
+        UPDATE alerta_arma
+        SET detecciones = detecciones + 1,
+            ultima_deteccion = NOW(),
+            confianza = GREATEST(confianza, %s)
+        WHERE id = %s
+        """,
+        (round(float(confianza), 4), alerta_id),
+    )
+
+
+def asignar_evidencia(alerta_id: int, ruta: str) -> int:
+    return ejecutar(
+        "UPDATE alerta_arma SET imagen_url = %s WHERE id = %s", (ruta, alerta_id)
+    )
+
+
+def asignar_portador(alerta_id: int, persona_id: int) -> int:
+    """Registra al portador que el guardia confirmo al verificar la evidencia."""
+    return ejecutar(
+        "UPDATE alerta_arma SET portador_id = %s WHERE id = %s", (persona_id, alerta_id)
+    )
 
 
 def obtener_alerta(alerta_id: int) -> Optional[dict[str, Any]]:
@@ -349,8 +458,27 @@ def actualizar_estado_alerta(
     )
 
 
-def listar_alertas(estado: Optional[str] = None, limite: int = 100) -> list[dict[str, Any]]:
-    """Lista alertas con la persona asociada, usando la vista del modelo."""
+ESTADOS_ABIERTOS = ("generada", "notificada", "escalada", "en_atencion")
+
+
+def listar_alertas(
+    estado: Optional[str] = None, limite: int = 100, abiertas: bool = False
+) -> list[dict[str, Any]]:
+    """Lista alertas con su contexto, usando la vista del modelo.
+
+    Con abiertas=True devuelve las que el guardia todavia debe resolver, con
+    las escaladas primero.
+    """
+    if abiertas:
+        return consultar(
+            """
+            SELECT * FROM v_alerta_persona
+            WHERE estado IN ('generada', 'notificada', 'escalada', 'en_atencion')
+            ORDER BY (estado = 'escalada') DESC, fecha_hora DESC
+            LIMIT %s
+            """,
+            (limite,),
+        )
     if estado:
         return consultar(
             "SELECT * FROM v_alerta_persona WHERE estado = %s "
@@ -367,7 +495,7 @@ def alertas_sin_atender(minutos: int) -> list[dict[str, Any]]:
     """Alertas notificadas que nadie tomo dentro del tiempo definido (RF-14)."""
     return consultar(
         """
-        SELECT id, camara_id, punto_acceso_id, persona_id, fecha_hora
+        SELECT id, camara_id, punto_acceso_id, persona_contexto_id, fecha_hora
         FROM alerta_arma
         WHERE estado IN ('generada', 'notificada')
           AND fecha_hora < NOW() - (%s * INTERVAL '1 minute')
@@ -469,22 +597,52 @@ def listar_puntos_acceso() -> list[dict[str, Any]]:
     return consultar("SELECT * FROM punto_acceso ORDER BY nombre")
 
 
-def crear_punto_acceso(institucion_id: int, nombre: str, ubicacion: str = None) -> int:
+def obtener_punto_acceso(punto_acceso_id: int) -> Optional[dict[str, Any]]:
+    filas = consultar("SELECT * FROM punto_acceso WHERE id = %s", (punto_acceso_id,))
+    return filas[0] if filas else None
+
+
+def crear_punto_acceso(
+    institucion_id: int, nombre: str, ubicacion: str = None, sentido: str = "mixto"
+) -> int:
+    if sentido not in ("entrada", "salida", "mixto"):
+        raise ValueError(f"sentido invalido: {sentido}")
     filas = consultar(
-        "INSERT INTO punto_acceso (institucion_id, nombre, ubicacion) "
-        "VALUES (%s, %s, %s) RETURNING id",
-        (institucion_id, nombre, ubicacion),
+        "INSERT INTO punto_acceso (institucion_id, nombre, ubicacion, sentido) "
+        "VALUES (%s, %s, %s, %s) RETURNING id",
+        (institucion_id, nombre, ubicacion, sentido),
     )
     return filas[0]["id"]
+
+
+# El resumen del token de la estacion nunca sale de esta capa.
+_COLUMNAS_CAMARA = """id, punto_acceso_id, identificador, tipo, resolucion_ancho,
+                      resolucion_alto, lux_minimo, estado,
+                      (token_hash IS NOT NULL) AS tiene_credencial"""
 
 
 def listar_camaras(punto_acceso_id: Optional[int] = None) -> list[dict[str, Any]]:
     if punto_acceso_id is not None:
         return consultar(
-            "SELECT * FROM camara WHERE punto_acceso_id = %s ORDER BY identificador",
+            f"SELECT {_COLUMNAS_CAMARA} FROM camara WHERE punto_acceso_id = %s "
+            "ORDER BY identificador",
             (punto_acceso_id,),
         )
-    return consultar("SELECT * FROM camara ORDER BY punto_acceso_id, identificador")
+    return consultar(
+        f"SELECT {_COLUMNAS_CAMARA} FROM camara ORDER BY punto_acceso_id, identificador"
+    )
+
+
+def obtener_camara(camara_id: int) -> Optional[dict[str, Any]]:
+    """Camara con su resumen de credencial. Solo la usa la autenticacion."""
+    filas = consultar("SELECT * FROM camara WHERE id = %s", (camara_id,))
+    return filas[0] if filas else None
+
+
+def asignar_token_camara(camara_id: int, token_hash: str) -> int:
+    return ejecutar(
+        "UPDATE camara SET token_hash = %s WHERE id = %s", (token_hash, camara_id)
+    )
 
 
 def crear_camara(

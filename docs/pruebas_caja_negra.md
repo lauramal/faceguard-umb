@@ -27,14 +27,18 @@ en presencia física.
 
 ```bash
 # contra el servidor desplegado
-export FACEGUARD_URL=https://su-servidor.onrender.com
-export TEST_DATABASE_URL=postgresql://usuario:clave@host:5432/base
+export FACEGUARD_URL=https://su-servidor-de-pruebas.onrender.com
+export TEST_DATABASE_URL=postgresql://usuario:clave@host:5432/faceguard_test
 pytest tests/test_caja_negra.py --no-cov -v
 
 # o en local, sin despliegue (levanta la app sola)
 export TEST_DATABASE_URL=postgresql://usuario:clave@localhost:5432/faceguard_test
 pytest tests/test_caja_negra.py --no-cov -v
 ```
+
+> **Nunca contra producción.** Las pruebas borran la base indicada en
+> `TEST_DATABASE_URL`, cuyo nombre debe contener `test` o `prueba`, y no se
+> ejecutan contra un servidor con `APP_ENV=produccion`.
 
 > Si apunta a Render, **ábralo en el navegador primero**. El plan gratuito
 > suspende el servicio por inactividad y el primer arranque tarda cerca de un
@@ -52,7 +56,8 @@ un cuchillo de cocina romo. Avise al personal del lugar antes de la prueba.
 
 **Pasos**
 
-1. Deje corriendo la estación de captura: `python scripts/estacion_acceso.py 1 --api <URL>`
+1. Deje corriendo la estación de captura con la credencial de su cámara:
+   `FACEGUARD_TOKEN=<token> python scripts/estacion_acceso.py --api <URL>`
 2. Abra el panel web en otra pantalla, con sesión de guardia
 3. Una persona se ubica frente a la cámara **con el arma a la vista**, a unos 2 metros
 4. Observe la consola de la estación y el panel
@@ -60,8 +65,12 @@ un cuchillo de cocina romo. Avise al personal del lugar antes de la prueba.
 **Qué debe pasar**
 
 - la consola imprime `ALERTA: arma_fuego (0.xx)` o `arma_blanca`
-- la alerta aparece en el panel en estado *notificada*
-- la alerta muestra **el nombre de la persona**, no solo la cámara
+- la alerta aparece en el panel en estado *notificada*, sin recargar la página
+- el botón *Ver evidencia* abre el fotograma de la detección
+- si la persona fue identificada, aparece como **contexto**, no como portadora
+- el guardia la atiende y la confirma; solo entonces puede marcar al portador
+- mantener el arma frente a la cámara varios segundos **no** abre más alertas:
+  sube el contador de detecciones de la misma
 
 **Qué registrar**
 
@@ -118,7 +127,7 @@ segundos para las armas), medidos **en la estación de captura**, que es donde
 realmente corren los modelos.
 
 ```bash
-python scripts/medir_tiempos.py --api <URL> --repeticiones 30
+FACEGUARD_TOKEN=<token> python scripts/medir_tiempos.py --api <URL> --repeticiones 30
 ```
 
 El script mide por separado la codificación facial, la detección de armas y la
@@ -171,6 +180,33 @@ idealmente personal de seguridad. Nunca la autora del trabajo.
 
 ---
 
+## Protocolo E. Precisión del reconocimiento facial con voluntarios
+
+**Qué se verifica:** la hipótesis del 85 % sobre intentos reales.
+
+**Participantes:** los cinco voluntarios enrolados, más una o dos personas
+**no** enroladas para medir las falsas aceptaciones.
+
+**Pasos**
+
+1. Cada voluntario hace al menos 30 pasadas frente a la cámara, repartidas en
+   condiciones: luz normal, poca luz, de perfil, con gorra y con tapabocas.
+2. Por cada pasada, anote en una hoja quién pasó (`documento_real`, o
+   `desconocido`) y la `condicion`.
+3. Exporte los eventos de la sesión: `GET /api/reportes/accesos.csv?desde=...&hasta=...`
+4. Agregue al CSV las columnas `documento_real` y `condicion`, fila por fila.
+5. Calcule: `python scripts/evaluar_reconocimiento.py intentos.csv`
+
+El script separa aciertos, falsos rechazos, falsas aceptaciones y rechazos
+correctos, da precisión, exhaustividad, F1 y exactitud, desglosa por condición
+y compara con el 85 %.
+
+> Son intentos repetidos con las mismas cinco personas. Los resultados
+> describen el desempeño con esos participantes y en esas condiciones; no
+> permiten generalizarlo a toda la población de una institución.
+
+---
+
 ## Evidencia que debe quedar
 
 Para la sustentación conviene guardar:
@@ -179,4 +215,5 @@ Para la sustentación conviene guardar:
 - las tablas de los protocolos A y B, llenas a mano
 - la salida de `scripts/medir_tiempos.py`
 - el CSV de respuestas del SUS y el puntaje calculado
+- el CSV de intentos del protocolo E y la salida de `evaluar_reconocimiento.py`
 - fotos o video de la prueba presencial

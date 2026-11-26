@@ -1,0 +1,65 @@
+<section class="alertas-panel">
+  <h2>Alertas abiertas ({{ alertas|length }})</h2>
+  {% if not alertas %}
+  <p class="vacio">No hay alertas abiertas.</p>
+  {% else %}
+  <ul class="lista-alertas">
+    {% for a in alertas %}
+    <li class="alerta estado-{{ a.estado }}">
+      <div class="cabecera-alerta">
+        <strong>{{ 'Arma de fuego' if a.tipo_arma == 'arma_fuego' else ('Arma blanca' if a.tipo_arma == 'arma_blanca' else 'Arma') }}</strong>
+        <span class="etiqueta">{{ a.estado|replace('_', ' ') }}</span>
+        {% if a.estado == 'escalada' %}<span class="etiqueta urgente">escalada al administrador</span>{% endif %}
+        <span class="dato">confianza {{ '%.2f'|format(a.confianza) }}</span>
+        <span class="dato">{{ a.detecciones }} deteccion{{ 'es' if a.detecciones != 1 else '' }}</span>
+        <span class="dato">{{ a.punto_acceso }}</span>
+        <time>{{ a.fecha_hora }}</time>
+      </div>
+
+      <p class="contexto">
+        {% if a.contexto_nombres %}
+          Persona identificada en ese momento: <strong>{{ a.contexto_nombres }} {{ a.contexto_apellidos }}</strong>
+          ({{ a.contexto_tipo_persona }}).
+          <em>Es contexto, no prueba de que porte el arma: verifique la imagen.</em>
+        {% else %}
+          Sin persona identificada en ese momento.
+        {% endif %}
+      </p>
+
+      {% if puede_atender %}
+      <div class="acciones">
+        {% if a.imagen_url %}
+        <a class="boton secundario" href="{{ url_for('web.evidencia_alerta', alerta_id=a.alerta_id) }}"
+           target="_blank" rel="noopener">Ver evidencia</a>
+        {% endif %}
+
+        {% if a.estado in ('generada', 'notificada', 'escalada') %}
+        <form method="post" action="{{ url_for('web.atender_alerta', alerta_id=a.alerta_id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <button type="submit">Atender</button>
+        </form>
+        {% elif a.estado == 'en_atencion' %}
+        <form method="post" action="{{ url_for('web.resolver_alerta', alerta_id=a.alerta_id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="desenlace" value="confirmada">
+          {% if a.persona_contexto_id %}
+          <label class="portador">
+            <input type="checkbox" name="portador_id" value="{{ a.persona_contexto_id }}">
+            Verifique en la imagen que {{ a.contexto_nombres }} porta el arma
+          </label>
+          {% endif %}
+          <button type="submit" class="peligro">Confirmar arma</button>
+        </form>
+        <form method="post" action="{{ url_for('web.resolver_alerta', alerta_id=a.alerta_id) }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="desenlace" value="falso_positivo">
+          <button type="submit" class="secundario">Descartar: falso positivo</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>

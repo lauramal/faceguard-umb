@@ -11,3 +11,6 @@ capturas/
 
 modelos/*.pt
 !modelos/yolov8n-armas.pt
+
+.coverage
+evidencias/

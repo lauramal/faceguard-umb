@@ -11,6 +11,7 @@ import pytest
 
 from app import crear_app, repositorio as repo_real, seguridad
 from app.config import Config
+from tests.ayudas import ESTACION
 
 # Funciones del repositorio que la API invoca y que hay que sustituir.
 FUNCIONES = [
@@ -25,6 +26,9 @@ FUNCIONES = [
     "cambiar_estado_usuario", "listar_puntos_acceso", "crear_punto_acceso",
     "listar_camaras", "crear_camara", "registrar_auditoria",
     "listar_auditoria", "resumen_accesos",
+    "registrar_acceso_unico", "obtener_registro", "alerta_abierta_reciente",
+    "sumar_deteccion", "asignar_evidencia", "asignar_portador",
+    "obtener_punto_acceso", "obtener_camara", "asignar_token_camara",
 ]
 
 
@@ -39,6 +43,7 @@ def app(repo, monkeypatch):
         monkeypatch.setattr(repo_real, nombre, getattr(repo, nombre))
     aplicacion = crear_app(ConfigPrueba)
     aplicacion.config["TESTING"] = True
+    aplicacion.config["REPO_FALSO"] = repo
     return aplicacion
 
 
@@ -47,12 +52,29 @@ def client(app):
     return app.test_client()
 
 
-def entrar_como(client, rol: str, usuario_id: int = 1):
-    """Simula una sesion abierta con el rol indicado."""
+PERMISOS = {
+    "administrador": ["persona:crud", "usuario:crud", "camara:crud", "alerta:atender",
+                      "reporte:generar", "auditoria:consultar"],
+    "guardia": ["acceso:consultar", "acceso:verificar", "alerta:atender"],
+    "consulta": ["acceso:consultar", "reporte:generar"],
+}
+
+
+def entrar_como(client, rol: str, usuario_id: int = 1, estado: str = "activo"):
+    """Simula una sesion abierta con el rol indicado.
+
+    Como el servidor vuelve a leer el usuario en cada peticion, la cuenta
+    tiene que existir en el repositorio con ese rol y en estado activo.
+    """
+    repo = client.application.config["REPO_FALSO"]
+    repo.usuarios[usuario_id] = {
+        "id": usuario_id, "nombre": f"Usuario {rol}", "correo": f"{rol}{usuario_id}@x",
+        "contrasena_hash": "x", "rol_id": 1, "rol": rol, "estado": estado,
+        "intentos_fallidos": 0, "permisos": PERMISOS.get(rol, []),
+    }
     with client.session_transaction() as sesion:
         sesion["usuario_id"] = usuario_id
-        sesion["usuario_nombre"] = f"Usuario {rol}"
-        sesion["usuario_rol"] = rol
+        sesion["csrf"] = "token-csrf-de-prueba"
 
 
 class TestSalud:
@@ -173,7 +195,7 @@ class TestLogin:
 class TestBiometriaYSupresion:
     def test_el_administrador_borra_los_datos_biometricos(self, client, repo):
         pid = repo.crear_persona(autoriza_biometria=True, estado="activo")
-        from tests.ayudas import vector
+        from tests.ayudas import ESTACION, vector
         repo.guardar_codificacion(pid, vector(0.2))
         entrar_como(client, "administrador")
         respuesta = client.delete(f"/api/personas/{pid}/biometria")
@@ -194,28 +216,40 @@ class TestBiometriaYSupresion:
 
 
 class TestAlertasApi:
-    def test_la_alerta_se_crea_unida_a_la_persona(self, client, repo):
+    def test_la_alerta_se_crea_unida_al_evento_y_su_contexto(self, client, repo):
         pid = repo.crear_persona(estado="activo")
         rid = repo.registrar_acceso(punto_acceso_id=1, persona_id=pid,
                                     tipo_evento="ingreso", resultado="identificado")
-        respuesta = client.post("/api/alertas", json={
-            "camara_id": 1, "punto_acceso_id": 1, "tipo_arma": "arma_fuego",
-            "confianza": 0.91, "registro_acceso_id": rid, "persona_id": pid,
+        respuesta = client.post("/api/alertas", headers=ESTACION, json={
+            "tipo_arma": "arma_fuego", "confianza": 0.91,
+            "registro_acceso_id": rid, "rostros_en_escena": 1,
         })
         assert respuesta.status_code == 201
         guardada = repo.obtener_alerta(respuesta.get_json()["id"])
-        assert guardada["persona_id"] == pid
+        assert guardada["registro_acceso_id"] == rid
+        assert guardada["persona_contexto_id"] == pid
+        assert guardada["portador_id"] is None
         assert guardada["estado"] == "notificada"
 
+    def test_el_servidor_no_acepta_un_portador_enviado_por_la_estacion(self, client, repo):
+        """Que la estacion diga quien porta el arma no cuenta: lo decide el guardia."""
+        pid = repo.crear_persona(estado="activo")
+        respuesta = client.post("/api/alertas", headers=ESTACION, json={
+            "tipo_arma": "arma_fuego", "confianza": 0.91, "persona_id": pid,
+        })
+        guardada = repo.obtener_alerta(respuesta.get_json()["id"])
+        assert guardada["persona_contexto_id"] is None
+        assert guardada["portador_id"] is None
+
     def test_tipo_de_arma_invalido_da_400(self, client):
-        respuesta = client.post("/api/alertas", json={
+        respuesta = client.post("/api/alertas", headers=ESTACION, json={
             "camara_id": 1, "punto_acceso_id": 1,
             "tipo_arma": "sombrilla", "confianza": 0.9,
         })
         assert respuesta.status_code == 400
 
     def test_faltan_campos_da_400(self, client):
-        assert client.post("/api/alertas", json={"camara_id": 1}).status_code == 400
+        assert client.post("/api/alertas", headers=ESTACION, json={"camara_id": 1}).status_code == 400
 
     def test_no_se_puede_atender_saltando_estados(self, client, repo):
         aid = repo.crear_alerta(camara_id=1, punto_acceso_id=1,

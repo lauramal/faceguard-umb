@@ -122,6 +122,25 @@ def codificar_rostro(imagen_rgb: np.ndarray, *, estricto: bool = True) -> np.nda
     return np.asarray(codificaciones[0], dtype=np.float64)
 
 
+def codificar_principal(imagen_rgb: np.ndarray) -> tuple[Optional[np.ndarray], int]:
+    """Codifica el rostro principal y dice cuantos rostros hay en la imagen.
+
+    La estacion de captura necesita las dos cosas: la codificacion para
+    identificar, y el numero de rostros para saber si una deteccion de arma
+    en ese mismo fotograma puede asociarse a una sola persona como contexto.
+
+    Returns:
+        (codificacion o None si no hay rostro, numero de rostros).
+    """
+    fr = _cargar_face_recognition()
+    ubicaciones = fr.face_locations(imagen_rgb)
+    if not ubicaciones:
+        return None, 0
+    principal = max(ubicaciones, key=_area)
+    codificacion = fr.face_encodings(imagen_rgb, [principal])[0]
+    return np.asarray(codificacion, dtype=np.float64), len(ubicaciones)
+
+
 def promediar_codificaciones(codificaciones: Sequence[np.ndarray]) -> np.ndarray:
     """Combina varias capturas de la misma persona en una sola codificacion.
 

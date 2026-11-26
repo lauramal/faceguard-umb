@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block titulo %}Registros | FaceGuard UMB{% endblock %}
+{% block titulo %}Registros | FaceGuard{% endblock %}
 {% block contenido %}
 <h1>Historial de accesos</h1>
 
@@ -21,18 +21,21 @@
 
 <table>
   <thead>
-    <tr><th>Fecha y hora</th><th>Estudiante</th><th>Codigo</th>
-        <th>Evento</th><th>Punto</th><th>Confianza</th></tr>
+    <tr><th>Fecha y hora</th><th>Persona</th><th>Documento</th><th>Tipo</th>
+        <th>Evento</th><th>Metodo</th><th>Resultado</th><th>Punto</th><th>Distancia</th></tr>
   </thead>
   <tbody>
     {% for r in accesos %}
     <tr>
       <td>{{ r.fecha_hora }}</td>
-      <td>{{ r.nombres }} {{ r.apellidos }}</td>
-      <td>{{ r.codigo }}</td>
+      <td>{% if r.nombres %}{{ r.nombres }} {{ r.apellidos }}{% else %}<em>sin identificar</em>{% endif %}</td>
+      <td>{{ r.documento or '' }}</td>
+      <td>{{ r.tipo_persona or '' }}</td>
       <td><span class="evento {{ r.tipo_evento }}">{{ r.tipo_evento }}</span></td>
+      <td>{{ r.metodo }}</td>
+      <td>{{ r.resultado }}</td>
       <td>{{ r.punto_acceso }}</td>
-      <td>{{ '%.2f'|format(r.confianza) }}</td>
+      <td>{{ '%.2f'|format(r.distancia) if r.distancia is not none else '' }}</td>
     </tr>
     {% endfor %}
   </tbody>

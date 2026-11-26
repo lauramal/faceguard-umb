@@ -7,11 +7,23 @@ se cerro.
 
 Los estados y las transiciones son los mismos del diagrama de estados y los
 mismos que admite la restriccion CHECK de la tabla.
+
+Tambien decide como entra una deteccion al sistema:
+
+* Una misma arma vista en fotogramas seguidos no abre una alerta por
+  fotograma. Si ya hay una alerta abierta del mismo tipo en la misma camara,
+  la deteccion se suma a ella.
+* La persona identificada en el mismo momento queda como CONTEXTO de la
+  alerta, no como portadora. Que alguien aparezca en el mismo fotograma que
+  un arma no prueba que la lleve: puede estar al lado de quien la porta. El
+  portador solo se registra cuando el guardia, viendo la evidencia, confirma
+  la alerta e indica a quien corresponde.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
 from ..config import Config
@@ -108,18 +120,119 @@ def atender(alerta_id: int, usuario_id: int, repositorio=None) -> dict:
     return cambiar_estado(alerta_id, EN_ATENCION, usuario_id, repositorio)
 
 
-def resolver(alerta_id: int, usuario_id: int, confirmada: bool, repositorio=None) -> dict:
-    """Cierra la alerta como amenaza confirmada o como falso positivo."""
+def resolver(
+    alerta_id: int,
+    usuario_id: int,
+    confirmada: bool,
+    repositorio=None,
+    portador_id: Optional[int] = None,
+) -> dict:
+    """Cierra la alerta como amenaza confirmada o como falso positivo.
+
+    Al confirmar, el guardia puede indicar quien porta el arma. Es la unica
+    via por la que una alerta queda atribuida a una persona. Un falso
+    positivo no admite portador.
+    """
+    repo = _repo(repositorio)
+    if portador_id is not None and not confirmada:
+        raise TransicionInvalida("un falso positivo no puede tener portador")
+    if portador_id is not None and repo.obtener_persona(portador_id) is None:
+        raise TransicionInvalida(f"la persona {portador_id} no existe")
+
     estado = CONFIRMADA if confirmada else FALSO_POSITIVO
-    cambiar_estado(alerta_id, estado, usuario_id, repositorio)
-    return cambiar_estado(alerta_id, CERRADA, repositorio=repositorio)
+    cambiar_estado(alerta_id, estado, usuario_id, repo)
+    if portador_id is not None:
+        repo.asignar_portador(alerta_id, portador_id)
+    resultado = cambiar_estado(alerta_id, CERRADA, repositorio=repo)
+    resultado["desenlace"] = estado
+    resultado["portador_id"] = portador_id
+    return resultado
+
+
+# Segundos maximos entre el evento de acceso y la deteccion para tomar ese
+# evento como contexto de la alerta.
+SEGUNDOS_CONTEXTO = 120
+
+
+def contexto_de(repo, registro_acceso_id: Optional[int], camara: dict,
+                rostros_en_escena: Optional[int] = None) -> tuple[Optional[int], Optional[int]]:
+    """Valida el evento de acceso que la estacion asocia a la deteccion.
+
+    Returns:
+        (registro_acceso_id aceptado, persona_contexto_id).
+
+    El evento solo se acepta si ocurrio en el mismo punto de acceso de la
+    camara y hace poco. La persona de ese evento solo se toma como contexto
+    si el fotograma tenia un unico rostro; con varios, no hay forma de saber
+    a quien se refiere la deteccion y se deja en blanco.
+    """
+    if not registro_acceso_id:
+        return None, None
+    registro = repo.obtener_registro(int(registro_acceso_id))
+    if registro is None or registro["punto_acceso_id"] != camara["punto_acceso_id"]:
+        return None, None
+    fecha = registro.get("fecha_hora")
+    if fecha and datetime.now() - fecha > timedelta(seconds=SEGUNDOS_CONTEXTO):
+        return None, None
+    persona = registro.get("persona_id")
+    if rostros_en_escena is not None and int(rostros_en_escena) != 1:
+        persona = None
+    return registro["id"], persona
+
+
+def registrar_deteccion(
+    camara: dict,
+    tipo_arma: str,
+    confianza: float,
+    registro_acceso_id: Optional[int] = None,
+    rostros_en_escena: Optional[int] = None,
+    imagen: Optional[bytes] = None,
+    repositorio=None,
+    evidencias=None,
+) -> dict:
+    """Convierte una deteccion de la estacion en una alerta, sin duplicarla."""
+    repo = _repo(repositorio)
+
+    existente = repo.alerta_abierta_reciente(camara["id"], tipo_arma, Config.VENTANA_ALERTA)
+    if existente is not None:
+        repo.sumar_deteccion(existente["id"], confianza)
+        return {"id": existente["id"], "estado": existente["estado"], "duplicada": True}
+
+    registro_id, persona_contexto = contexto_de(
+        repo, registro_acceso_id, camara, rostros_en_escena
+    )
+    alerta_id = repo.crear_alerta(
+        camara_id=camara["id"],
+        punto_acceso_id=camara["punto_acceso_id"],
+        tipo_arma=tipo_arma,
+        confianza=confianza,
+        registro_acceso_id=registro_id,
+        persona_contexto_id=persona_contexto,
+    )
+
+    if imagen:
+        if evidencias is None:
+            from . import evidencias
+        try:
+            repo.asignar_evidencia(alerta_id, evidencias.guardar(alerta_id, imagen))
+        except Exception as exc:        # la alerta vale mas que su foto
+            log.error("No se pudo guardar la evidencia de la alerta %s: %s", alerta_id, exc)
+
+    notificar(alerta_id, repo)
+    return {
+        "id": alerta_id,
+        "estado": NOTIFICADA,
+        "duplicada": False,
+        "persona_contexto_id": persona_contexto,
+    }
 
 
 def escalar_pendientes(repositorio=None, minutos: Optional[int] = None) -> list[int]:
     """Sube al administrador las alertas que nadie atendio (RF-14).
 
-    Se invoca desde el endpoint de escalamiento, que a su vez puede llamarse
-    desde una tarea programada. Devuelve los identificadores escalados.
+    La invoca sola la tarea de fondo del servidor (servicios/tareas.py) cada
+    cierto tiempo, y tambien cada vez que alguien abre el panel o consulta
+    las alertas. Devuelve los identificadores escalados.
     """
     repo = _repo(repositorio)
     minutos = Config.MINUTOS_ESCALAMIENTO if minutos is None else minutos

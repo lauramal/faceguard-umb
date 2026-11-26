@@ -6,6 +6,7 @@ total, incluyendo la codificacion facial y la inferencia de YOLOv8, y eso solo
 se puede medir aqui, en la estacion de captura.
 
 Uso:
+    export FACEGUARD_TOKEN=1.xxxxxxxx      # credencial de la camara
     python scripts/medir_tiempos.py --api http://localhost:5000 --repeticiones 30
 """
 
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -31,7 +33,8 @@ LIMITE_ARMAS_MS = 2000      # RNF-02
 def argumentos():
     parser = argparse.ArgumentParser(description="Tiempos de respuesta")
     parser.add_argument("--api", default="http://localhost:5000")
-    parser.add_argument("--punto-acceso", type=int, default=1)
+    parser.add_argument("--token", default=os.getenv("FACEGUARD_TOKEN"),
+                        help="credencial de la camara (o variable FACEGUARD_TOKEN)")
     parser.add_argument("--repeticiones", type=int, default=30)
     parser.add_argument("--dispositivo", type=int, default=0,
                         help="camara del sistema; -1 usa un fotograma sintetico")
@@ -108,8 +111,7 @@ def main() -> int:
         inicio = time.perf_counter()
         requests.post(f"{args.api}/api/accesos/evento", json={
             "codificacion": vector.tolist(),
-            "punto_acceso_id": args.punto_acceso,
-        }, timeout=30)
+        }, headers={"Authorization": f"Bearer {args.token}"}, timeout=30)
         medidas.append((time.perf_counter() - inicio) * 1000)
     informe["respuesta_servidor"] = resumen("Respuesta del servidor", medidas, None)
 

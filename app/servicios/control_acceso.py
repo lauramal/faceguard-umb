@@ -4,7 +4,7 @@ Este servicio une el modulo de reconocimiento facial con la base de datos.
 Recibe un fotograma, obtiene la codificacion, la compara contra el catalogo y
 decide si el evento es un ingreso o una salida.
 
-Tres reglas gobiernan el proceso:
+Cuatro reglas gobiernan el proceso:
 
 1. La identidad se decide sobre la distancia, no sobre la confianza.
 2. Los eventos no identificados TAMBIEN se registran, con su evidencia, para
@@ -12,12 +12,20 @@ Tres reglas gobiernan el proceso:
    olvida.
 3. Una misma persona no genera un registro por fotograma. La ventana
    antirrebote evita que quien se queda frente a la camara produzca una
-   secuencia absurda de ingresos y salidas alternados.
+   secuencia absurda de ingresos y salidas alternados. La comprobacion y la
+   insercion ocurren en una sola transaccion, de modo que dos fotogramas
+   simultaneos tampoco duplican el evento. Lo mismo vale para un rostro
+   desconocido: se registra una vez, no una por segundo.
+4. Ingreso o salida lo decide primero el sentido del punto de acceso. En un
+   punto mixto se alterna con el ultimo evento, salvo que ese ultimo ingreso
+   sea tan viejo que la salida se perdio: entonces el evento nuevo es otro
+   ingreso.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -30,6 +38,7 @@ from .reconocimiento_facial import (
     Identificacion,
     RostroNoDetectado,
     codificar_rostro,
+    distancia as distancia_entre,
     identificar,
 )
 
@@ -76,6 +85,94 @@ def siguiente_evento(ultimo_tipo: Optional[str]) -> str:
     el diagrama de estados de la clase RegistroAcceso.
     """
     return "salida" if ultimo_tipo == "ingreso" else "ingreso"
+
+
+def decidir_evento(
+    ultimo: Optional[dict],
+    sentido: str = "mixto",
+    ahora: Optional[datetime] = None,
+) -> str:
+    """Decide si el evento es ingreso o salida.
+
+    1. Un punto de solo entrada registra ingresos y uno de solo salida,
+       salidas, sin importar el historial.
+    2. En un punto mixto se alterna con el ultimo evento de la persona.
+    3. Excepcion: si el ultimo evento fue un ingreso de hace mas de
+       HORAS_JORNADA_MAXIMA, la salida se perdio (la persona salio por otro
+       lado o la camara no la vio). El evento nuevo es un ingreso; tratarlo
+       como salida invertiria todo el historial a partir de ahi.
+    """
+    if sentido == "entrada":
+        return "ingreso"
+    if sentido == "salida":
+        return "salida"
+    if not ultimo:
+        return "ingreso"
+    ahora = ahora or datetime.now()
+    jornada = timedelta(hours=Config.HORAS_JORNADA_MAXIMA)
+    if (ultimo.get("tipo_evento") == "ingreso" and ultimo.get("fecha_hora")
+            and ahora - ultimo["fecha_hora"] > jornada):
+        return "ingreso"
+    return siguiente_evento(ultimo.get("tipo_evento"))
+
+
+# --------------------------------------------------------------------------
+# Rostros desconocidos recientes
+#
+# El servidor no guarda la codificacion de quien no esta enrolado (seria
+# tratar un dato biometrico sin consentimiento). Para no registrar al mismo
+# desconocido una vez por segundo, se recuerda su vector en memoria solo
+# durante la ventana antirrebote y luego se descarta.
+# --------------------------------------------------------------------------
+
+_desconocidos: dict[int, list[tuple[np.ndarray, float, int]]] = {}
+_candado_desconocidos = threading.Lock()
+
+
+def _desconocido_reciente(punto_acceso_id: int, vector: np.ndarray) -> Optional[int]:
+    limite = time.monotonic() - Config.VENTANA_ANTIREBOTE
+    with _candado_desconocidos:
+        vigentes = [(v, t, r) for v, t, r in _desconocidos.get(punto_acceso_id, [])
+                    if t >= limite]
+        _desconocidos[punto_acceso_id] = vigentes
+        for v, _, registro_id in vigentes:
+            if distancia_entre(v, vector) <= Config.UMBRAL_DISTANCIA:
+                return registro_id
+    return None
+
+
+def _recordar_desconocido(punto_acceso_id: int, vector: np.ndarray, registro_id: int) -> None:
+    with _candado_desconocidos:
+        _desconocidos.setdefault(punto_acceso_id, []).append(
+            (np.asarray(vector, dtype=np.float64), time.monotonic(), registro_id)
+        )
+
+
+def olvidar_desconocidos() -> None:
+    """Vacia la memoria de desconocidos. Lo usan las pruebas."""
+    with _candado_desconocidos:
+        _desconocidos.clear()
+
+
+def _sentido(repo, punto_acceso_id: int) -> str:
+    obtener = getattr(repo, "obtener_punto_acceso", None)
+    punto = obtener(punto_acceso_id) if obtener else None
+    return (punto or {}).get("sentido") or "mixto"
+
+
+def _registrar_identificado(repo, *, punto_acceso_id, tipo_evento, persona_id,
+                            camara_id, metodo, distancia=None, confianza=None):
+    """Inserta sin duplicar. Devuelve (registro_id, creado)."""
+    return repo.registrar_acceso_unico(
+        punto_acceso_id=punto_acceso_id,
+        tipo_evento=tipo_evento,
+        persona_id=persona_id,
+        ventana_segundos=Config.VENTANA_ANTIREBOTE,
+        camara_id=camara_id,
+        metodo=metodo,
+        distancia=distancia,
+        confianza=confianza,
+    )
 
 
 def es_rebote(ultimo: Optional[dict], ahora: Optional[datetime] = None) -> bool:
@@ -132,6 +229,18 @@ def procesar_codificacion(
 
     # ---- No identificado: se registra igual, con evidencia ----------------
     if not resultado.identificado:
+        dist = None if resultado.distancia == float("inf") else resultado.distancia
+        repetido = _desconocido_reciente(punto_acceso_id, codificacion)
+        if repetido is not None:
+            return ResultadoAcceso(
+                identificado=False,
+                resultado="no_identificado",
+                distancia=dist,
+                confianza=resultado.confianza,
+                registro_id=repetido,
+                motivo="evento_reciente_omitido",
+                milisegundos=transcurrido(),
+            )
         log.info("Rostro no identificado en el punto %s", punto_acceso_id)
         registro_id = repo.registrar_acceso(
             punto_acceso_id=punto_acceso_id,
@@ -144,6 +253,7 @@ def procesar_codificacion(
             confianza=resultado.confianza,
             imagen_url=imagen_url,
         )
+        _recordar_desconocido(punto_acceso_id, codificacion, registro_id)
         return ResultadoAcceso(
             identificado=False,
             resultado="no_identificado",
@@ -176,17 +286,30 @@ def procesar_codificacion(
             milisegundos=transcurrido(),
         )
 
-    tipo_evento = siguiente_evento(ultimo["tipo_evento"] if ultimo else None)
-    registro_id = repo.registrar_acceso(
+    tipo_evento = decidir_evento(ultimo, _sentido(repo, punto_acceso_id))
+    registro_id, creado = _registrar_identificado(
+        repo,
         punto_acceso_id=punto_acceso_id,
-        camara_id=camara_id,
-        persona_id=resultado.persona_id,
         tipo_evento=tipo_evento,
+        persona_id=resultado.persona_id,
+        camara_id=camara_id,
         metodo="facial",
-        resultado="identificado",
         distancia=resultado.distancia,
         confianza=resultado.confianza,
     )
+    if not creado:
+        # Otro fotograma de la misma persona gano la carrera.
+        return ResultadoAcceso(
+            identificado=True,
+            persona_id=resultado.persona_id,
+            nombre=f"{persona['nombres']} {persona['apellidos']}",
+            tipo_evento=tipo_evento,
+            distancia=resultado.distancia,
+            confianza=resultado.confianza,
+            registro_id=registro_id,
+            motivo="evento_reciente_omitido",
+            milisegundos=transcurrido(),
+        )
 
     return ResultadoAcceso(
         identificado=True,
@@ -265,14 +388,26 @@ def registrar_con_credencial(
             milisegundos=(time.perf_counter() - inicio) * 1000,
         )
 
-    tipo_evento = siguiente_evento(ultimo["tipo_evento"] if ultimo else None)
-    registro_id = repo.registrar_acceso(
+    tipo_evento = decidir_evento(ultimo, _sentido(repo, punto_acceso_id))
+    registro_id, creado = _registrar_identificado(
+        repo,
         punto_acceso_id=punto_acceso_id,
-        persona_id=persona_id,
         tipo_evento=tipo_evento,
+        persona_id=persona_id,
+        camara_id=None,
         metodo="credencial",
-        resultado="identificado",
     )
+    if not creado:
+        return ResultadoAcceso(
+            identificado=True,
+            persona_id=persona_id,
+            nombre=f"{persona['nombres']} {persona['apellidos']}",
+            tipo_evento=tipo_evento,
+            metodo="credencial",
+            registro_id=registro_id,
+            motivo="evento_reciente_omitido",
+            milisegundos=(time.perf_counter() - inicio) * 1000,
+        )
     return ResultadoAcceso(
         identificado=True,
         persona_id=persona_id,

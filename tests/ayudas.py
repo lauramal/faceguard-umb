@@ -22,3 +22,8 @@ def vector_a_distancia(base: float, distancia_objetivo: float) -> np.ndarray:
     """Devuelve un vector que dista exactamente lo pedido de vector(base)."""
     delta = distancia_objetivo / np.sqrt(128)
     return np.full(128, base + delta, dtype=np.float64)
+
+
+# Credencial de la estacion de la camara 1 del repositorio falso.
+TOKEN_ESTACION = "1.secreto-de-prueba"
+ESTACION = {"Authorization": f"Bearer {TOKEN_ESTACION}"}

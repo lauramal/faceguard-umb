@@ -1,13 +1,16 @@
 """Estacion de captura del punto de acceso (CU-02, CU-03).
 
-Corre en el equipo del punto de acceso, no en el servidor. Aqui si viven
-dlib y YOLOv8, que son las librerias pesadas: el servidor solo recibe el
-vector de 128 numeros y el aviso de arma, de modo que cabe en un plan
-gratuito (RNF-11). Como efecto secundario, las imagenes de los rostros nunca
-salen de este equipo.
+Corre en el equipo del punto de acceso, no en el servidor. Aqui viven dlib y
+YOLOv8, que son las librerias pesadas: el servidor solo recibe el vector de 128
+numeros y el aviso de arma, de modo que cabe en un plan gratuito (RNF-11). Las
+imagenes de los rostros no salen de este equipo; solo sale el fotograma de una
+deteccion de arma, como evidencia para el guardia.
 
-Uso:
-    python scripts/estacion_acceso.py 1 --api http://localhost:5000
+La estacion se autentica con la credencial de su camara, que el administrador
+genera con POST /api/camaras/<id>/credencial:
+
+    export FACEGUARD_TOKEN=1.xxxxxxxxxxxxxxxx
+    python scripts/estacion_acceso.py --api https://su-servidor.onrender.com
 
 Pulse q para salir.
 """
@@ -15,6 +18,8 @@ Pulse q para salir.
 from __future__ import annotations
 
 import argparse
+import base64
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,11 +30,12 @@ import cv2        # noqa: E402
 import requests   # noqa: E402
 
 from app.servicios.deteccion_armas import DetectorArmas          # noqa: E402
-from app.servicios.reconocimiento_facial import (                # noqa: E402
-    RostroNoDetectado, codificar_rostro,
-)
+from app.servicios.reconocimiento_facial import codificar_principal  # noqa: E402
 
 INTERVALO_SEGUNDOS = 1.0
+# Una misma arma frente a la camara no se reporta en cada fotograma. El
+# servidor tambien agrupa las repetidas, pero no hace falta mandarlas todas.
+PAUSA_ENTRE_AVISOS = 10.0
 VERDE = (0, 180, 0)
 AMBAR = (0, 170, 220)
 ROJO = (0, 0, 220)
@@ -37,10 +43,10 @@ ROJO = (0, 0, 220)
 
 def argumentos():
     parser = argparse.ArgumentParser(description="Estacion de captura FaceGuard")
-    parser.add_argument("punto_acceso_id", type=int)
-    parser.add_argument("--api", default="http://localhost:5000",
+    parser.add_argument("--api", default=os.getenv("FACEGUARD_API", "http://localhost:5000"),
                         help="URL base del servidor de aplicacion")
-    parser.add_argument("--camara-id", type=int, default=None)
+    parser.add_argument("--token", default=os.getenv("FACEGUARD_TOKEN"),
+                        help="credencial de la camara (o variable FACEGUARD_TOKEN)")
     parser.add_argument("--dispositivo", type=int, default=0,
                         help="indice de la camara del sistema")
     parser.add_argument("--sin-armas", action="store_true",
@@ -48,25 +54,43 @@ def argumentos():
     return parser.parse_args()
 
 
-def enviar_evento(api: str, payload: dict) -> dict | None:
-    try:
-        respuesta = requests.post(f"{api}/api/accesos/evento", json=payload, timeout=10)
-        respuesta.raise_for_status()
-        return respuesta.json()
-    except requests.RequestException as exc:
-        print(f"  [!] no se pudo enviar el evento: {exc}")
-        return None
+class Servidor:
+    def __init__(self, api: str, token: str):
+        self.api = api.rstrip("/")
+        self.sesion = requests.Session()
+        self.sesion.headers["Authorization"] = f"Bearer {token}"
+
+    def _post(self, ruta: str, payload: dict) -> dict | None:
+        try:
+            respuesta = self.sesion.post(f"{self.api}{ruta}", json=payload, timeout=10)
+            if respuesta.status_code == 401:
+                print("  [!] el servidor rechazo la credencial de la estacion")
+                return None
+            respuesta.raise_for_status()
+            return respuesta.json()
+        except requests.RequestException as exc:
+            print(f"  [!] no se pudo enviar a {ruta}: {exc}")
+            return None
+
+    def evento(self, codificacion) -> dict | None:
+        return self._post("/api/accesos/evento", {"codificacion": codificacion.tolist()})
+
+    def alerta(self, payload: dict) -> dict | None:
+        return self._post("/api/alertas", payload)
 
 
-def enviar_alerta(api: str, payload: dict) -> None:
-    try:
-        requests.post(f"{api}/api/alertas", json=payload, timeout=10).raise_for_status()
-    except requests.RequestException as exc:
-        print(f"  [!] no se pudo enviar la alerta: {exc}")
+def jpeg_base64(fotograma) -> str:
+    ok, buffer = cv2.imencode(".jpg", fotograma, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return base64.b64encode(buffer.tobytes()).decode() if ok else ""
 
 
 def main() -> int:
     args = argumentos()
+    if not args.token:
+        print("Falta la credencial de la camara: use --token o FACEGUARD_TOKEN.")
+        return 2
+
+    servidor = Servidor(args.api, args.token)
     detector = None if args.sin_armas else DetectorArmas()
 
     camara = cv2.VideoCapture(args.dispositivo)
@@ -74,8 +98,9 @@ def main() -> int:
         print("No se pudo abrir la camara")
         return 1
 
-    print(f"Estacion activa en el punto {args.punto_acceso_id}. API: {args.api}")
+    print(f"Estacion activa. API: {args.api}")
     ultimo_analisis = 0.0
+    ultimo_aviso: dict[str, float] = {}
     mensaje, color = "Esperando...", VERDE
 
     try:
@@ -90,22 +115,16 @@ def main() -> int:
                 rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
 
                 # ---- Identificacion facial ----------------------------
-                registro_id = persona_id = None
-                try:
-                    codificacion = codificar_rostro(rgb, estricto=False)
-                except RostroNoDetectado:
+                registro_id = None
+                codificacion, rostros = codificar_principal(rgb)
+                if codificacion is None:
                     mensaje, color = "Sin rostro en el encuadre", AMBAR
                 else:
-                    respuesta = enviar_evento(args.api, {
-                        "codificacion": codificacion.tolist(),
-                        "punto_acceso_id": args.punto_acceso_id,
-                        "camara_id": args.camara_id,
-                    })
+                    respuesta = servidor.evento(codificacion)
                     if respuesta is None:
                         mensaje, color = "Servidor no disponible", ROJO
                     elif respuesta["identificado"]:
                         registro_id = respuesta["registro_id"]
-                        persona_id = respuesta["persona_id"]
                         mensaje = (f"{respuesta['nombre']} | {respuesta['tipo_evento']}"
                                    f" | d={respuesta['distancia']}"
                                    f" | {respuesta['milisegundos']:.0f} ms")
@@ -120,18 +139,23 @@ def main() -> int:
                 if detector is not None:
                     hallazgo = detector.mas_probable(rgb)
                     if hallazgo is not None:
-                        aviso = (f"ALERTA: {hallazgo.tipo_arma} "
-                                 f"({hallazgo.confianza:.2f})")
-                        print(f"  {aviso}")
+                        aviso = f"ALERTA: {hallazgo.tipo_arma} ({hallazgo.confianza:.2f})"
                         mensaje, color = aviso, ROJO
-                        enviar_alerta(args.api, {
-                            "camara_id": args.camara_id or 1,
-                            "punto_acceso_id": args.punto_acceso_id,
-                            "tipo_arma": hallazgo.tipo_arma,
-                            "confianza": hallazgo.confianza,
-                            "registro_acceso_id": registro_id,
-                            "persona_id": persona_id,
-                        })
+                        previo = ultimo_aviso.get(hallazgo.tipo_arma, 0.0)
+                        if ahora - previo >= PAUSA_ENTRE_AVISOS:
+                            ultimo_aviso[hallazgo.tipo_arma] = ahora
+                            print(f"  {aviso}")
+                            # Se envia el evento de acceso del mismo fotograma
+                            # y cuantos rostros habia. La persona de ese evento
+                            # es contexto: el servidor no la marca como
+                            # portadora, eso lo decide el guardia.
+                            servidor.alerta({
+                                "tipo_arma": hallazgo.tipo_arma,
+                                "confianza": hallazgo.confianza,
+                                "registro_acceso_id": registro_id,
+                                "rostros_en_escena": rostros,
+                                "imagen": jpeg_base64(fotograma),
+                            })
 
             cv2.putText(fotograma, mensaje[:70], (12, 32),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)

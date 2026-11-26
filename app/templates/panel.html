@@ -1,42 +1,32 @@
 {% extends "base.html" %}
-{% block titulo %}Panel | FaceGuard UMB{% endblock %}
+{% block titulo %}Panel | FaceGuard{% endblock %}
 {% block contenido %}
-<h1>Panel de monitoreo</h1>
+<h1>Panel de seguridad</h1>
 
-{% if alertas %}
-<section class="alertas">
-  <h2>Alertas abiertas</h2>
-  <ul>
-    {% for a in alertas %}
-    <li>
-      <strong>{{ a.tipo_arma }}</strong>
-      confianza {{ '%.2f'|format(a.confianza) }}
-      <time>{{ a.fecha_hora }}</time>
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-{% else %}
-<p class="vacio">No hay alertas abiertas.</p>
-{% endif %}
+<div id="zona-alertas" data-url="{{ url_for('web.panel_alertas') }}"
+     data-segundos="{{ segundos_refresco }}">
+  {% include "_alertas.html" %}
+</div>
+<p class="refresco">La lista de alertas se actualiza sola cada {{ segundos_refresco }} segundos.</p>
 
 <section>
   <h2>Ultimos accesos</h2>
   {% if accesos %}
   <table>
     <thead>
-      <tr><th>Fecha y hora</th><th>Estudiante</th><th>Codigo</th>
-          <th>Evento</th><th>Punto</th><th>Confianza</th></tr>
+      <tr><th>Fecha y hora</th><th>Persona</th><th>Tipo</th>
+          <th>Evento</th><th>Metodo</th><th>Resultado</th><th>Punto</th></tr>
     </thead>
     <tbody>
       {% for r in accesos %}
       <tr>
         <td>{{ r.fecha_hora }}</td>
-        <td>{{ r.nombres }} {{ r.apellidos }}</td>
-        <td>{{ r.codigo }}</td>
+        <td>{% if r.nombres %}{{ r.nombres }} {{ r.apellidos }}{% else %}<em>sin identificar</em>{% endif %}</td>
+        <td>{{ r.tipo_persona or '' }}</td>
         <td><span class="evento {{ r.tipo_evento }}">{{ r.tipo_evento }}</span></td>
+        <td>{{ r.metodo }}</td>
+        <td>{{ r.resultado }}</td>
         <td>{{ r.punto_acceso }}</td>
-        <td>{{ '%.2f'|format(r.confianza) }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -45,4 +35,30 @@
   <p class="vacio">Todavia no hay registros de acceso.</p>
   {% endif %}
 </section>
+{% endblock %}
+
+{% block scripts %}
+<noscript><meta http-equiv="refresh" content="{{ segundos_refresco }}"></noscript>
+<script>
+(function () {
+  var zona = document.getElementById("zona-alertas");
+  if (!zona) { return; }
+  var url = zona.dataset.url;
+  var cada = (parseInt(zona.dataset.segundos, 10) || 10) * 1000;
+  function actualizar() {
+    // No se refresca mientras el guardia escribe en un formulario.
+    if (zona.contains(document.activeElement) &&
+        document.activeElement.tagName === "INPUT") { return; }
+    fetch(url, { credentials: "same-origin" })
+      .then(function (r) {
+        if (r.status === 200) { return r.text(); }
+        if (r.redirected || r.status === 401) { window.location = "/login"; }
+        return null;
+      })
+      .then(function (html) { if (html !== null) { zona.innerHTML = html; } })
+      .catch(function () { /* sin red: se intenta en el siguiente ciclo */ });
+  }
+  setInterval(actualizar, cada);
+})();
+</script>
 {% endblock %}

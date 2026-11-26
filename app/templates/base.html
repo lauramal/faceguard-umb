@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block titulo %}FaceGuard UMB{% endblock %}</title>
+  <title>{% block titulo %}FaceGuard{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/estilo.css') }}">
 </head>
 <body>
   {% if usuario %}
   <header class="barra">
-    <span class="marca">FaceGuard <strong>UMB</strong></span>
+    <span class="marca"><strong>FaceGuard</strong></span>
     <nav>
       <a href="{{ url_for('web.panel') }}">Panel</a>
       <a href="{{ url_for('web.registros') }}">Registros</a>
@@ -29,9 +29,10 @@
 
     {% block contenido %}{% endblock %}
   </main>
+  {% block scripts %}{% endblock %}
 
   <footer>
-    <p>Universidad Manuela Beltran, Ingenieria de Software. Prototipo academico.</p>
+    <p>FaceGuard. Prototipo academico de control de acceso para instituciones de educacion superior.</p>
   </footer>
 </body>
 </html>

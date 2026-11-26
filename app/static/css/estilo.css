@@ -141,3 +141,37 @@ footer {
   th, td { padding: 0.45rem 0.5rem; }
   .barra .usuario { margin-left: 0; width: 100%; }
 }
+
+/* ---- Panel de alertas -------------------------------------------------- */
+.lista-alertas { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+.alerta {
+  background: var(--blanco);
+  border: 1px solid var(--linea);
+  border-left: 4px solid var(--vino);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+.alerta.estado-escalada { border-left-color: #c00; background: #fff5f5; }
+.alerta.estado-en_atencion { border-left-color: var(--ambar); }
+.cabecera-alerta { display: flex; flex-wrap: wrap; gap: 0.5rem 0.9rem; align-items: baseline; }
+.cabecera-alerta time, .dato { color: var(--gris); font-size: 0.85rem; }
+.etiqueta {
+  font-size: 0.75rem; padding: 0.05rem 0.5rem; border-radius: 999px;
+  background: var(--fondo); border: 1px solid var(--linea);
+}
+.etiqueta.urgente { background: #c00; color: var(--blanco); border-color: #c00; }
+.contexto { margin: 0.5rem 0; font-size: 0.9rem; }
+.contexto em { color: var(--gris); }
+.acciones { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.acciones form { display: flex; gap: 0.5rem; align-items: center; margin: 0; flex-wrap: wrap; }
+.portador { font-size: 0.85rem; display: flex; gap: 0.35rem; align-items: center; }
+button, .boton {
+  font: inherit; font-size: 0.85rem; padding: 0.35rem 0.8rem; border-radius: 4px;
+  border: 1px solid var(--vino); background: var(--vino); color: var(--blanco);
+  cursor: pointer; text-decoration: none; display: inline-block;
+}
+button.secundario, .boton.secundario { background: var(--blanco); color: var(--vino); }
+button.peligro { background: #a00; border-color: #a00; }
+.refresco { color: var(--gris); font-size: 0.8rem; margin-top: 0.4rem; }
+.aviso.ok { background: #e4f3ec; color: var(--verde); padding: 0.5rem 0.75rem; border-radius: 4px; }
+.aviso.error { background: #fdeaec; color: var(--vino); padding: 0.5rem 0.75rem; border-radius: 4px; }

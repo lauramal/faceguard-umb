@@ -6,6 +6,7 @@ from flask import Blueprint, g, jsonify, request
 
 from .. import repositorio
 from ..config import Config
+from .. import seguridad
 from ..seguridad import requiere_rol
 
 bp = Blueprint("camaras", __name__, url_prefix="/api")
@@ -23,9 +24,13 @@ def crear_punto():
     cuerpo = request.get_json(silent=True) or {}
     if not cuerpo.get("institucion_id") or not cuerpo.get("nombre"):
         return jsonify({"error": "institucion_id y nombre son obligatorios"}), 400
-    punto_id = repositorio.crear_punto_acceso(
-        int(cuerpo["institucion_id"]), cuerpo["nombre"], cuerpo.get("ubicacion")
-    )
+    try:
+        punto_id = repositorio.crear_punto_acceso(
+            int(cuerpo["institucion_id"]), cuerpo["nombre"], cuerpo.get("ubicacion"),
+            cuerpo.get("sentido", "mixto"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     repositorio.registrar_auditoria(
         g.usuario["id"], "crear_punto_acceso", "punto_acceso", punto_id
     )
@@ -65,3 +70,26 @@ def crear_camara():
         g.usuario["id"], "crear_camara", "camara", camara_id
     )
     return jsonify({"id": camara_id}), 201
+
+
+@bp.post("/camaras/<int:camara_id>/credencial")
+@requiere_rol("administrador")
+def emitir_credencial(camara_id: int):
+    """Genera la credencial de la estacion de captura de esta camara.
+
+    El token se muestra UNA sola vez; en la base queda solo su resumen.
+    Emitir una credencial nueva invalida la anterior, que es lo que se hace
+    si un equipo se pierde o se sospecha que la credencial se filtro.
+    """
+    if repositorio.obtener_camara(camara_id) is None:
+        return jsonify({"error": "camara no encontrada"}), 404
+    token, resumen = seguridad.generar_credencial_estacion(camara_id)
+    repositorio.asignar_token_camara(camara_id, resumen)
+    repositorio.registrar_auditoria(
+        g.usuario["id"], "emitir_credencial_estacion", "camara", camara_id
+    )
+    return jsonify({
+        "camara_id": camara_id,
+        "token": token,
+        "aviso": "Guarde este token en la estacion (FACEGUARD_TOKEN). No se volvera a mostrar.",
+    }), 201

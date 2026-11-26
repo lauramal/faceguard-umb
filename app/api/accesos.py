@@ -8,7 +8,7 @@ import numpy as np
 from flask import Blueprint, g, jsonify, request
 
 from .. import repositorio
-from ..seguridad import requiere_rol
+from ..seguridad import requiere_estacion, requiere_rol
 from ..servicios.control_acceso import (
     procesar_codificacion, procesar_fotograma, registrar_con_credencial,
 )
@@ -17,19 +17,35 @@ from .personas import decodificar_imagen
 bp = Blueprint("accesos", __name__, url_prefix="/api/accesos")
 
 
+def _punto_de_la_camara(cuerpo: dict):
+    """El punto de acceso sale de la camara autenticada, no del cuerpo.
+
+    Si la estacion declara un punto distinto al de su camara, se rechaza:
+    es una estacion mal configurada o alguien intentando registrar eventos
+    en otro acceso.
+    """
+    declarado = cuerpo.get("punto_acceso_id")
+    real = g.camara["punto_acceso_id"]
+    if declarado is not None and int(declarado) != int(real):
+        return None
+    return real
+
+
 @bp.post("/evento")
+@requiere_estacion
 def registrar_evento():
     """Via principal: la estacion envia la codificacion ya calculada.
 
     El servidor nunca ve la imagen del rostro ni necesita dlib, solo numpy
-    para comparar los 128 numeros contra el catalogo (RNF-11).
+    para comparar los 128 numeros contra el catalogo (RNF-11). Solo la acepta
+    de una estacion con credencial valida.
     """
     cuerpo = request.get_json(silent=True) or {}
     codificacion = cuerpo.get("codificacion")
-    punto_acceso_id = cuerpo.get("punto_acceso_id")
+    punto_acceso_id = _punto_de_la_camara(cuerpo)
 
-    if not punto_acceso_id:
-        return jsonify({"error": "falta el campo punto_acceso_id"}), 400
+    if punto_acceso_id is None:
+        return jsonify({"error": "la camara no pertenece a ese punto de acceso"}), 409
     if not isinstance(codificacion, list) or len(codificacion) != 128:
         return jsonify({"error": "codificacion debe ser una lista de 128 numeros"}), 400
 
@@ -41,13 +57,14 @@ def registrar_evento():
     resultado = procesar_codificacion(
         vector,
         int(punto_acceso_id),
-        camara_id=cuerpo.get("camara_id"),
+        camara_id=g.camara["id"],
         imagen_url=cuerpo.get("imagen_url"),
     )
     return jsonify(resultado.a_dict()), 200
 
 
 @bp.post("/identificar")
+@requiere_estacion
 def identificar_y_registrar():
     """Via auxiliar: recibe el fotograma y hace todo en el servidor.
 
@@ -57,12 +74,12 @@ def identificar_y_registrar():
     """
     cuerpo = request.get_json(silent=True) or {}
     imagen_b64 = cuerpo.get("imagen")
-    punto_acceso_id = cuerpo.get("punto_acceso_id")
+    punto_acceso_id = _punto_de_la_camara(cuerpo)
 
     if not imagen_b64:
         return jsonify({"error": "falta el campo imagen"}), 400
-    if not punto_acceso_id:
-        return jsonify({"error": "falta el campo punto_acceso_id"}), 400
+    if punto_acceso_id is None:
+        return jsonify({"error": "la camara no pertenece a ese punto de acceso"}), 409
 
     try:
         imagen = decodificar_imagen(imagen_b64)
@@ -72,7 +89,7 @@ def identificar_y_registrar():
     resultado = procesar_fotograma(
         imagen,
         int(punto_acceso_id),
-        camara_id=cuerpo.get("camara_id"),
+        camara_id=g.camara["id"],
         imagen_url=cuerpo.get("imagen_url"),
     )
     return jsonify(resultado.a_dict()), 200

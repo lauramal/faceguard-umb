@@ -44,6 +44,9 @@ pytestmark = pytest.mark.skipif(
 ESQUEMA = pathlib.Path(__file__).resolve().parents[1] / "db" / "schema.sql"
 
 CLAVE_ADMIN = "Clave-Admin-2026"
+SECRETO_ESTACION = "secreto-de-caja-negra"
+# La estacion de captura se autentica con la credencial de su camara.
+ESTACION = {"Authorization": f"Bearer 1.{SECRETO_ESTACION}"}
 CLAVE_GUARDIA = "Clave-Guardia-2026"
 
 
@@ -65,17 +68,29 @@ class _HandlerSilencioso(WSGIRequestHandler):
 @pytest.fixture(scope="module")
 def servidor():
     """Devuelve la URL base. Externa si se indico, o una local efimera."""
+    from tests.bd_de_pruebas import exigir_bd_desechable
+
+    exigir_bd_desechable(URL_BD)
     if URL_EXTERNA:
+        import requests
+
+        # Estas pruebas crean y borran datos. Contra un servidor que declara
+        # ser produccion no se ejecutan.
+        entorno = requests.get(f"{URL_EXTERNA}/salud", timeout=60).json().get("entorno")
+        if entorno == "produccion":
+            pytest.skip("el servidor indicado es de produccion; use uno de pruebas")
         yield URL_EXTERNA
         return
 
-    os.environ["DATABASE_URL"] = URL_BD
     from app import crear_app, db
     from app.config import Config
 
     class ConfigLocal(Config):
         DATABASE_URL = URL_BD
         SECRET_KEY = "clave-de-caja-negra"
+        APP_ENV = "pruebas"
+        # Revision de escalamiento frecuente, para verla ocurrir sola.
+        SEGUNDOS_REVISION_ESCALAMIENTO = 1
 
     # El pool lee Config del modulo db, no la configuracion de la app.
     db.Config.DATABASE_URL = URL_BD
@@ -104,9 +119,12 @@ def datos(servidor):
         cur.execute(ESQUEMA.read_text(encoding="utf-8"))
         cur.execute("INSERT INTO institucion (nombre) VALUES ('Institucion de prueba')")
         cur.execute("INSERT INTO punto_acceso (institucion_id, nombre) VALUES (1,'Porteria')")
+        import hashlib
+
         cur.execute(
             "INSERT INTO camara (punto_acceso_id, identificador, resolucion_ancho,"
-            " resolucion_alto) VALUES (1,'CAM-01',1280,720)"
+            " resolucion_alto, token_hash) VALUES (1,'CAM-01',1280,720,%s)",
+            (hashlib.sha256(SECRETO_ESTACION.encode()).hexdigest(),),
         )
         for nombre, correo, clave, rol in (
             ("Admin", "admin@prueba.edu", CLAVE_ADMIN, "administrador"),
@@ -162,7 +180,7 @@ def entrar(sesion, base, correo, clave):
 
 class TestPersonaRegistrada:
     def test_queda_registrada_como_ingreso(self, servidor, datos, sesion):
-        respuesta = sesion.post(f"{servidor}/api/accesos/evento", json={
+        respuesta = sesion.post(f"{servidor}/api/accesos/evento", headers=ESTACION, json={
             "codificacion": codificacion(0.0),
             "punto_acceso_id": 1, "camara_id": 1,
         }, timeout=20)
@@ -191,7 +209,7 @@ class TestPersonaRegistrada:
                 "UPDATE registro_acceso SET fecha_hora = NOW() - INTERVAL '1 hour'"
                 " WHERE persona_id = %s", (datos["persona_id"],)
             )
-        respuesta = requests.post(f"{servidor}/api/accesos/evento", json={
+        respuesta = requests.post(f"{servidor}/api/accesos/evento", headers=ESTACION, json={
             "codificacion": codificacion(0.0), "punto_acceso_id": 1,
         }, timeout=20)
         assert respuesta.json()["tipo_evento"] == "salida"
@@ -205,7 +223,7 @@ class TestPersonaDesconocida:
     def test_no_la_identifica_pero_guarda_el_evento(self, servidor, datos):
         import requests
 
-        respuesta = requests.post(f"{servidor}/api/accesos/evento", json={
+        respuesta = requests.post(f"{servidor}/api/accesos/evento", headers=ESTACION, json={
             "codificacion": codificacion_lejana(0.95),
             "punto_acceso_id": 1, "camara_id": 1,
             "imagen_url": "s3://evidencias/desconocido.jpg",
@@ -243,31 +261,56 @@ class TestAlertaDeArma:
     def test_la_alerta_se_crea_y_se_notifica(self, servidor, datos):
         import requests
 
-        registro = requests.post(f"{servidor}/api/accesos/evento", json={
+        registro = requests.post(f"{servidor}/api/accesos/evento", headers=ESTACION, json={
             "codificacion": codificacion(0.0), "punto_acceso_id": 1, "camara_id": 1,
         }, timeout=20).json()
 
-        respuesta = requests.post(f"{servidor}/api/alertas", json={
-            "camara_id": 1, "punto_acceso_id": 1, "tipo_arma": "arma_blanca",
-            "confianza": 0.84, "registro_acceso_id": registro["registro_id"],
-            "persona_id": datos["persona_id"],
+        respuesta = requests.post(f"{servidor}/api/alertas", headers=ESTACION, json={
+            "tipo_arma": "arma_blanca", "confianza": 0.84,
+            "registro_acceso_id": registro["registro_id"], "rostros_en_escena": 1,
         }, timeout=15)
         assert respuesta.status_code == 201
         assert respuesta.json()["estado"] == "notificada"
 
-    def test_la_alerta_dice_quien_llevaba_el_arma(self, servidor, datos, sesion):
+    def test_la_alerta_muestra_el_contexto_sin_atribuir_el_arma(self, servidor, datos, sesion):
+        """La persona del evento aparece como contexto; portadora, todavia nadie."""
         entrar(sesion, servidor, "guardia@prueba.edu", CLAVE_GUARDIA)
         alertas = sesion.get(f"{servidor}/api/alertas", timeout=15).json()["alertas"]
         assert alertas
-        assert alertas[0]["nombres"] == "Ana", "la alerta debe identificar a la persona"
+        assert alertas[0]["contexto_nombres"] == "Ana"
+        assert alertas[0]["portador_id"] is None
+
+    def test_la_misma_arma_no_genera_alertas_repetidas(self, servidor):
+        import requests
+
+        cuerpo = {"tipo_arma": "arma_blanca", "confianza": 0.80}
+        segunda = requests.post(f"{servidor}/api/alertas", headers=ESTACION,
+                                json=cuerpo, timeout=15)
+        assert segunda.status_code == 200
+        assert segunda.json()["duplicada"] is True
+
+    def test_sin_credencial_de_estacion_no_se_aceptan_alertas(self, servidor):
+        import requests
+
+        respuesta = requests.post(f"{servidor}/api/alertas", json={
+            "tipo_arma": "arma_fuego", "confianza": 0.99,
+        }, timeout=15)
+        assert respuesta.status_code == 401
+
+    def test_sin_credencial_de_estacion_no_se_registran_ingresos(self, servidor):
+        import requests
+
+        respuesta = requests.post(f"{servidor}/api/accesos/evento", json={
+            "codificacion": codificacion(0.0),
+        }, headers={"Authorization": "Bearer 1.inventada"}, timeout=15)
+        assert respuesta.status_code == 401
 
     def test_un_objeto_que_no_es_arma_no_se_acepta(self, servidor):
         """El sistema solo admite los tipos de arma de su vocabulario."""
         import requests
 
-        respuesta = requests.post(f"{servidor}/api/alertas", json={
-            "camara_id": 1, "punto_acceso_id": 1, "tipo_arma": "sombrilla",
-            "confianza": 0.97,
+        respuesta = requests.post(f"{servidor}/api/alertas", headers=ESTACION, json={
+            "tipo_arma": "sombrilla", "confianza": 0.97,
         }, timeout=15)
         assert respuesta.status_code == 400
 
@@ -382,12 +425,12 @@ class TestReportes:
 # ===========================================================================
 
 class TestEscalamiento:
-    def test_la_alerta_abandonada_sube_al_administrador(self, servidor, datos, sesion):
+    def test_la_alerta_abandonada_sube_sola_al_administrador(self, servidor, datos, sesion):
+        """Nadie invoca un endpoint: el servidor la escala por su cuenta."""
         import requests
 
-        creada = requests.post(f"{servidor}/api/alertas", json={
-            "camara_id": 1, "punto_acceso_id": 1, "tipo_arma": "arma_fuego",
-            "confianza": 0.93,
+        creada = requests.post(f"{servidor}/api/alertas", headers=ESTACION, json={
+            "tipo_arma": "arma_fuego", "confianza": 0.93,
         }, timeout=15).json()
 
         with datos["conn"].cursor() as cur:
@@ -396,14 +439,26 @@ class TestEscalamiento:
                 " WHERE id = %s", (creada["id"],)
             )
 
-        entrar(sesion, servidor, "admin@prueba.edu", CLAVE_ADMIN)
-        respuesta = sesion.post(f"{servidor}/api/alertas/escalar", timeout=20)
-        assert respuesta.status_code == 200
-        assert creada["id"] in respuesta.json()["escaladas"]
+        estado = None
+        for _ in range(16):
+            with datos["conn"].cursor() as cur:
+                cur.execute("SELECT estado FROM alerta_arma WHERE id=%s", (creada["id"],))
+                estado = cur.fetchone()[0]
+            if estado == "escalada":
+                break
+            if URL_EXTERNA:
+                # En un servidor externo la revision de fondo puede tardar mas;
+                # consultar las alertas tambien escala lo pendiente.
+                entrar(sesion, servidor, "guardia@prueba.edu", CLAVE_GUARDIA)
+                sesion.get(f"{servidor}/api/alertas", timeout=15)
+            time.sleep(0.5)
+        assert estado == "escalada"
 
-        with datos["conn"].cursor() as cur:
-            cur.execute("SELECT estado FROM alerta_arma WHERE id=%s", (creada["id"],))
-            assert cur.fetchone()[0] == "escalada"
+    def test_la_escalada_aparece_primero_en_el_panel(self, servidor, sesion):
+        entrar(sesion, servidor, "guardia@prueba.edu", CLAVE_GUARDIA)
+        abiertas = sesion.get(f"{servidor}/api/alertas", params={"abiertas": 1},
+                              timeout=15).json()["alertas"]
+        assert abiertas[0]["estado"] == "escalada"
 
 
 # ===========================================================================
@@ -418,8 +473,8 @@ class TestTiempos:
         medidas = []
         for _ in range(5):
             inicio = time.perf_counter()
-            requests.post(f"{servidor}/api/accesos/evento", json={
-                "codificacion": codificacion(0.0), "punto_acceso_id": 1,
+            requests.post(f"{servidor}/api/accesos/evento", headers=ESTACION, json={
+                "codificacion": codificacion(0.0),
             }, timeout=30)
             medidas.append(time.perf_counter() - inicio)
 

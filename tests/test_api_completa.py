@@ -16,7 +16,7 @@ from PIL import Image
 
 from app import seguridad
 from app.servicios import control_acceso
-from tests.ayudas import vector, vector_a_distancia
+from tests.ayudas import ESTACION, vector, vector_a_distancia
 from tests.test_api import app, client, entrar_como  # noqa: F401  (fixtures)
 
 
@@ -143,7 +143,7 @@ class TestIdentificacionDesdeLaEstacion:
     def test_identifica_y_registra(self, client, repo, sin_dlib):
         pid = repo.crear_persona(autoriza_biometria=True, estado="activo")
         repo.guardar_codificacion(pid, vector(0.0))
-        respuesta = client.post("/api/accesos/identificar", json={
+        respuesta = client.post("/api/accesos/identificar", headers=ESTACION, json={
             "imagen": imagen_base64(), "punto_acceso_id": 1, "camara_id": 1,
         })
         datos = respuesta.get_json()
@@ -154,7 +154,7 @@ class TestIdentificacionDesdeLaEstacion:
     def test_el_desconocido_queda_registrado_para_verificacion(self, client, repo, sin_dlib):
         otro = repo.crear_persona(autoriza_biometria=True, estado="activo")
         repo.guardar_codificacion(otro, vector_a_distancia(0.0, 0.95))
-        respuesta = client.post("/api/accesos/identificar", json={
+        respuesta = client.post("/api/accesos/identificar", headers=ESTACION, json={
             "imagen": imagen_base64(), "punto_acceso_id": 1,
             "imagen_url": "s3://ev/9.jpg",
         })
@@ -165,15 +165,17 @@ class TestIdentificacionDesdeLaEstacion:
         assert repo.listar_accesos()[0]["imagen_url"] == "s3://ev/9.jpg"
 
     def test_falta_la_imagen(self, client):
-        assert client.post("/api/accesos/identificar",
+        assert client.post("/api/accesos/identificar", headers=ESTACION,
                            json={"punto_acceso_id": 1}).status_code == 400
 
-    def test_falta_el_punto_de_acceso(self, client):
-        assert client.post("/api/accesos/identificar",
-                           json={"imagen": imagen_base64()}).status_code == 400
+    def test_punto_de_acceso_ajeno_a_la_camara_da_409(self, client):
+        """El punto sale de la camara autenticada; otro punto se rechaza."""
+        assert client.post("/api/accesos/identificar", headers=ESTACION,
+                           json={"imagen": imagen_base64(),
+                                 "punto_acceso_id": 7}).status_code == 409
 
     def test_imagen_corrupta(self, client):
-        assert client.post("/api/accesos/identificar", json={
+        assert client.post("/api/accesos/identificar", headers=ESTACION, json={
             "imagen": "esto-no-es-una-imagen", "punto_acceso_id": 1,
         }).status_code == 400
 
@@ -356,7 +358,7 @@ class TestEndpointEvento:
     def test_identifica_a_partir_de_la_codificacion(self, client, repo):
         pid = repo.crear_persona(autoriza_biometria=True, estado="activo")
         repo.guardar_codificacion(pid, vector(0.0))
-        respuesta = client.post("/api/accesos/evento", json={
+        respuesta = client.post("/api/accesos/evento", headers=ESTACION, json={
             "codificacion": vector(0.0).tolist(),
             "punto_acceso_id": 1, "camara_id": 1,
         })
@@ -368,28 +370,37 @@ class TestEndpointEvento:
     def test_el_desconocido_queda_registrado(self, client, repo):
         otro = repo.crear_persona(autoriza_biometria=True, estado="activo")
         repo.guardar_codificacion(otro, vector_a_distancia(0.0, 0.95))
-        respuesta = client.post("/api/accesos/evento", json={
+        respuesta = client.post("/api/accesos/evento", headers=ESTACION, json={
             "codificacion": vector(0.0).tolist(), "punto_acceso_id": 1,
         })
         assert respuesta.get_json()["resultado"] == "no_identificado"
 
     def test_codificacion_de_tamano_incorrecto_da_400(self, client):
-        respuesta = client.post("/api/accesos/evento", json={
+        respuesta = client.post("/api/accesos/evento", headers=ESTACION, json={
             "codificacion": [0.1, 0.2], "punto_acceso_id": 1,
         })
         assert respuesta.status_code == 400
 
     def test_codificacion_ausente_da_400(self, client):
-        assert client.post("/api/accesos/evento",
+        assert client.post("/api/accesos/evento", headers=ESTACION,
                            json={"punto_acceso_id": 1}).status_code == 400
 
-    def test_sin_punto_de_acceso_da_400(self, client):
-        assert client.post("/api/accesos/evento", json={
+    def test_el_punto_de_acceso_sale_de_la_camara(self, client, repo):
+        """La estacion no necesita declarar el punto: lo fija su credencial."""
+        respuesta = client.post("/api/accesos/evento", headers=ESTACION, json={
             "codificacion": vector(0.0).tolist(),
-        }).status_code == 400
+        })
+        assert respuesta.status_code == 200
+        assert repo.registros[0]["punto_acceso_id"] == 1
+        assert repo.registros[0]["camara_id"] == 1
+
+    def test_punto_de_acceso_ajeno_a_la_camara_da_409(self, client):
+        assert client.post("/api/accesos/evento", headers=ESTACION, json={
+            "codificacion": vector(0.0).tolist(), "punto_acceso_id": 7,
+        }).status_code == 409
 
     def test_codificacion_con_texto_da_400(self, client):
-        respuesta = client.post("/api/accesos/evento", json={
+        respuesta = client.post("/api/accesos/evento", headers=ESTACION, json={
             "codificacion": ["a"] * 128, "punto_acceso_id": 1,
         })
         assert respuesta.status_code == 400
@@ -398,8 +409,8 @@ class TestEndpointEvento:
         pid = repo.crear_persona(autoriza_biometria=True, estado="activo")
         repo.guardar_codificacion(pid, vector(0.0))
         cuerpo = {"codificacion": vector(0.0).tolist(), "punto_acceso_id": 1}
-        primero = client.post("/api/accesos/evento", json=cuerpo).get_json()
-        segundo = client.post("/api/accesos/evento", json=cuerpo).get_json()
+        primero = client.post("/api/accesos/evento", headers=ESTACION, json=cuerpo).get_json()
+        segundo = client.post("/api/accesos/evento", headers=ESTACION, json=cuerpo).get_json()
         assert segundo["registro_id"] == primero["registro_id"]
         assert segundo["motivo"] == "evento_reciente_omitido"
         assert len(repo.registros) == 1

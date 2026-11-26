@@ -28,11 +28,16 @@ pytestmark = pytest.mark.skipif(
 
 ESQUEMA = pathlib.Path(__file__).resolve().parents[1] / "db" / "schema.sql"
 
+# Usar una base aparte, nunca la de produccion. Ver tests/bd_de_pruebas.py.
+
 
 @pytest.fixture(scope="module")
 def conexion():
     import psycopg2
 
+    from tests.bd_de_pruebas import exigir_bd_desechable
+
+    exigir_bd_desechable(URL)
     conn = psycopg2.connect(URL)
     conn.autocommit = True
     with conn.cursor() as cur:
@@ -155,20 +160,94 @@ class TestRestriccionesDelEsquema:
 
 
 class TestAlertaUnidaALaPersona:
-    """El aporte del trabajo: saber quien llevaba el arma."""
+    """La alerta queda unida al evento; el portador solo lo fija el guardia."""
 
-    def test_la_vista_responde_quien_portaba_el_arma(self, repo):
-        pid = repo.crear_persona(1, "5001", "estudiante", "Sara", "Lopez",
+    def _alerta_con_contexto(self, repo, documento="5001"):
+        pid = repo.crear_persona(1, documento, "estudiante", "Sara", "Lopez",
                                  autoriza_biometria=True)
         repo.actualizar_estado_persona(pid, "activo")
         rid = repo.registrar_acceso(1, "ingreso", "identificado", persona_id=pid,
                                     camara_id=1, distancia=0.38, confianza=0.36)
-        repo.crear_alerta(1, 1, "arma_blanca", 0.81,
-                          registro_acceso_id=rid, persona_id=pid)
+        aid = repo.crear_alerta(1, 1, "arma_blanca", 0.81,
+                                registro_acceso_id=rid, persona_contexto_id=pid)
+        return pid, rid, aid
 
+    def test_la_vista_muestra_el_contexto_y_no_un_portador(self, repo):
+        pid, rid, _ = self._alerta_con_contexto(repo)
         alertas = repo.listar_alertas()
-        assert alertas[0]["nombres"] == "Sara"
+        assert alertas[0]["contexto_nombres"] == "Sara"
         assert alertas[0]["registro_acceso_id"] == rid
+        assert alertas[0]["portador_id"] is None
+
+    def test_la_base_impide_un_portador_sin_confirmacion(self, repo):
+        import psycopg2
+
+        pid, _, aid = self._alerta_con_contexto(repo, "5002")
+        with pytest.raises(psycopg2.errors.CheckViolation):
+            repo.asignar_portador(aid, pid)
+
+    def test_el_portador_queda_tras_la_confirmacion_del_guardia(self, repo):
+        from app import seguridad
+        from app.servicios import alertas as servicio
+
+        pid, _, aid = self._alerta_con_contexto(repo, "5003")
+        guardia = repo.crear_usuario("G", "g@p.edu", seguridad.hashear("x"), 2)
+        servicio.notificar(aid)
+        servicio.atender(aid, guardia)
+        servicio.resolver(aid, guardia, confirmada=True, portador_id=pid)
+        alerta = repo.listar_alertas()[0]
+        assert alerta["estado"] == "cerrada"
+        assert alerta["portador_nombres"] == "Sara"
+
+    def test_la_deteccion_repetida_se_suma_a_la_abierta(self, repo):
+        _, _, aid = self._alerta_con_contexto(repo, "5004")
+        abierta = repo.alerta_abierta_reciente(1, "arma_blanca", 60)
+        assert abierta["id"] == aid
+        repo.sumar_deteccion(aid, 0.95)
+        guardada = repo.obtener_alerta(aid)
+        assert guardada["detecciones"] == 2
+        assert float(guardada["confianza"]) == 0.95
+
+
+class TestRegistroSinDuplicados:
+    def test_no_se_duplica_dentro_de_la_ventana(self, repo):
+        pid = repo.crear_persona(1, "6001", "docente", "Iv", "Ro")
+        primero, creado1 = repo.registrar_acceso_unico(1, "ingreso", pid, 30, camara_id=1)
+        segundo, creado2 = repo.registrar_acceso_unico(1, "salida", pid, 30, camara_id=1)
+        assert creado1 is True and creado2 is False
+        assert segundo == primero
+
+    def test_peticiones_simultaneas_dejan_un_solo_registro(self, repo):
+        """Dos fotogramas a la vez: el candado deja pasar solo uno."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from app.db import consultar
+
+        pid = repo.crear_persona(1, "6002", "docente", "Al", "Ma")
+        with ThreadPoolExecutor(max_workers=4) as hilos:
+            resultados = list(hilos.map(
+                lambda _: repo.registrar_acceso_unico(1, "ingreso", pid, 30, camara_id=1),
+                range(4)))
+        assert sum(1 for _, creado in resultados if creado) == 1
+        filas = consultar("SELECT COUNT(*) AS n FROM registro_acceso WHERE persona_id=%s",
+                          (pid,))
+        assert filas[0]["n"] == 1
+
+    def test_el_sentido_del_punto_se_guarda(self, repo):
+        punto = repo.crear_punto_acceso(1, "Torniquete salida", sentido="salida")
+        assert repo.obtener_punto_acceso(punto)["sentido"] == "salida"
+
+
+class TestCredencialDeEstacion:
+    def test_la_camara_guarda_solo_el_resumen(self, repo):
+        from app import seguridad
+
+        token, resumen = seguridad.generar_credencial_estacion(1)
+        repo.asignar_token_camara(1, resumen)
+        assert seguridad.autenticar_estacion(f"Bearer {token}")["id"] == 1
+        assert "token_hash" not in repo.listar_camaras()[0]
+        assert repo.listar_camaras()[0]["tiene_credencial"] is True
+
 
     def test_el_escalamiento_encuentra_las_pendientes(self, repo):
         from app.db import ejecutar
