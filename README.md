@@ -28,6 +28,12 @@ frente a la Ley 1581 de 2012.
 
 ---
 
+## Demostración rápida
+
+Para ver el sistema funcionando sin cámara ni base de datos: `pip install -r requirements.txt` y `python scripts/demo.py`. Las pruebas corren solas en GitHub (pestaña **Actions**). Detalles en `docs/demostracion.md`.
+
+---
+
 ## Instalación
 
 ### Servidor de aplicación

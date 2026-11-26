@@ -22,3 +22,5 @@ Pillow==10.3.0
 # Pruebas
 pytest==8.2.0
 pytest-cov==5.0.0
+# Cliente HTTP de las pruebas de caja negra y de la estacion simulada de la demo
+requests==2.32.3

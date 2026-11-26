@@ -175,3 +175,5 @@ button.peligro { background: #a00; border-color: #a00; }
 .refresco { color: var(--gris); font-size: 0.8rem; margin-top: 0.4rem; }
 .aviso.ok { background: #e4f3ec; color: var(--verde); padding: 0.5rem 0.75rem; border-radius: 4px; }
 .aviso.error { background: #fdeaec; color: var(--vino); padding: 0.5rem 0.75rem; border-radius: 4px; }
+
+.franja-demo { background: #fff3cd; color: #6b4e00; text-align: center; font-size: 0.85rem; padding: 0.4rem 1rem; border-bottom: 1px solid #e6d28a; }

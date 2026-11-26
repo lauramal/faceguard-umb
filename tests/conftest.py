@@ -167,9 +167,25 @@ class RepositorioFalso:
 
     def listar_accesos(self, desde=None, hasta=None, persona_id=None,
                        punto_acceso_id=None, resultado=None, limite=200):
-        filas = [copy.deepcopy(r) for r in self.registros
-                 if (persona_id is None or r["persona_id"] == persona_id)
-                 and (resultado is None or r["resultado"] == resultado)]
+        filas = []
+        for r in self.registros:
+            if persona_id is not None and r["persona_id"] != persona_id:
+                continue
+            if resultado is not None and r["resultado"] != resultado:
+                continue
+            if punto_acceso_id is not None and r["punto_acceso_id"] != punto_acceso_id:
+                continue
+            if desde is not None and r["fecha_hora"] < desde:
+                continue
+            if hasta is not None and r["fecha_hora"] > hasta:
+                continue
+            # Igual que la consulta real: se unen la persona y el punto de acceso
+            fila = copy.deepcopy(r)
+            persona = self.personas.get(r["persona_id"]) or {}
+            for campo in ("documento", "nombres", "apellidos", "tipo_persona"):
+                fila[campo] = persona.get(campo)
+            fila["punto_acceso"] = self.puntos.get(r["punto_acceso_id"], {}).get("nombre")
+            filas.append(fila)
         return sorted(filas, key=lambda r: r["fecha_hora"], reverse=True)[:limite]
 
     # ---------------- alertas ----------------

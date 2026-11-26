@@ -7,6 +7,9 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/estilo.css') }}">
 </head>
 <body>
+  {% if config.get('DEMO') %}
+  <div class="franja-demo">Modo demostración: base de datos en memoria y estación de captura simulada. Los datos son de ejemplo y no son resultados de evaluación.</div>
+  {% endif %}
   {% if usuario %}
   <header class="barra">
     <span class="marca"><strong>FaceGuard</strong></span>

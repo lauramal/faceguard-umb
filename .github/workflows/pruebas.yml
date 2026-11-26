@@ -1,0 +1,41 @@
+# Ejecuta toda la suite en cada push: las pruebas de caja blanca y, contra un
+# PostgreSQL desechable que GitHub levanta para la ocasion, las de integracion
+# y de caja negra. El resultado queda visible en la pestana "Actions" del
+# repositorio y como una marca verde o roja junto a cada commit.
+name: Pruebas
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: faceguard
+          POSTGRES_PASSWORD: faceguard
+          POSTGRES_DB: faceguard_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faceguard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://faceguard:faceguard@localhost:5432/faceguard_test
+      SECRET_KEY: clave-de-integracion-continua
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Instalar dependencias del servidor
+        run: pip install -r requirements.txt
+      - name: Ejecutar las pruebas
+        run: pytest -v
