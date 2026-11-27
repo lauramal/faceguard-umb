@@ -70,7 +70,7 @@
              data-evidencia="{{ url_for('web.evidencia_alerta', alerta_id=a.alerta_id) }}"
              data-titulo="{{ nombre_arma }} #{{ a.alerta_id }}" target="_blank" rel="noopener">Evidencia</a>
           {% endif %}
-          {% if a.estado in ('generada', 'notificada', 'escalada', 'en_atencion') %}
+          {% if puede_atender and a.estado in ('generada', 'notificada', 'escalada', 'en_atencion') %}
           <a class="boton primario pequeno" href="{{ url_for('web.panel') }}#alerta-{{ a.alerta_id }}">Gestionar</a>
           {% endif %}
         </td>

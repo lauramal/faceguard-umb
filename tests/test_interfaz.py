@@ -124,6 +124,20 @@ class TestSeguimientoDeAlertas:
         assert f'id="alerta-{nueva}"' not in html
         assert "Alertas abiertas (2)" in html          # el total no cambia
 
+    def test_consulta_ve_las_alertas_pero_no_puede_gestionarlas(self, client, repo):
+        aid = _alerta(repo, "escalada")
+        entrar_como(client, "consulta")
+        for ruta in ("/panel/alertas", "/alertas"):
+            html = client.get(ruta).get_data(as_text=True)
+            assert f"#{aid}" in html                       # la ve
+            for accion in ("Atender", "Confirmar arma", "Descartar", "Gestionar", "data-evidencia="):
+                assert accion not in html, f"consulta ve '{accion}' en {ruta}"
+        assert client.get(f"/panel/alertas/{aid}/evidencia").status_code == 403
+        assert client.post(f"/panel/alertas/{aid}/atender").status_code == 403
+        assert repo.alertas[aid]["estado"] == "escalada"   # nada cambio
+        entrar_como(client, "guardia")
+        assert "Gestionar" in client.get("/alertas").get_data(as_text=True)
+
     def test_la_bitacora_es_solo_del_administrador(self, client, repo):
         repo.registrar_auditoria(1, "ver_evidencia", "alerta_arma", 3)
         entrar_como(client, "guardia")
