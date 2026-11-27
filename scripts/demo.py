@@ -92,6 +92,10 @@ def preparar(fuente: str):
         DEMO = True
         DEMO_FUENTE = fuente
         MINUTOS_ESCALAMIENTO = 1          # para ver el escalamiento en la demo
+        # Ventana contra alertas repetidas: en produccion son 2 minutos. En la
+        # demo se acorta para que lleguen alertas nuevas cada rato; la misma
+        # arma vista dos veces seguidas sigue sumando a una sola alerta.
+        VENTANA_ALERTA = int(os.getenv("DEMO_VENTANA", "20"))
         SEGUNDOS_REVISION_ESCALAMIENTO = 10
         EVIDENCIAS_DIR = os.environ["EVIDENCIAS_DIR"]
         SUPABASE_URL = ""
@@ -99,6 +103,7 @@ def preparar(fuente: str):
     Config.EVIDENCIAS_DIR = ConfigDemo.EVIDENCIAS_DIR
     Config.SUPABASE_URL = ""
     Config.MINUTOS_ESCALAMIENTO = ConfigDemo.MINUTOS_ESCALAMIENTO
+    Config.VENTANA_ALERTA = ConfigDemo.VENTANA_ALERTA
 
     # ---- datos de ejemplo -------------------------------------------------
     repo.puntos[1]["nombre"] = "Porteria principal"
@@ -301,7 +306,7 @@ def estacion_simulada(personas, banco: Banco):
                 ruido = vector + RNG.normal(0, 0.025, 128)
                 respuesta = sesion.post(f"{URL}/api/accesos/evento",
                                         json={"codificacion": ruido.tolist()}, timeout=10).json()
-                if ciclo % 3 == 0:
+                if ciclo % 2 == 0:
                     aviso = aviso_de_arma(banco, umbral)
                     if aviso:
                         aviso["registro_acceso_id"] = respuesta.get("registro_id")

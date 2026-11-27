@@ -58,6 +58,12 @@ Si sube la carpeta `datos_demo/` al repositorio, la demostración funciona con
 fotos reales en cualquier equipo. Las fotos son del conjunto Güvenlik Sistemi
 (licencia CC BY 4.0), y la atribución va en `datos_demo/ATRIBUCION.md`.
 
+En la demostración llega una alerta nueva cada 30 segundos más o menos. La
+ventana contra alertas repetidas se acorta a 20 segundos (en producción son 2
+minutos, `VENTANA_ALERTA`): la misma arma vista dos veces seguidas suma a una
+sola alerta, y una detección posterior abre otra. Se cambia con la variable
+`DEMO_VENTANA`. Las alertas sin atender pasan a escaladas al minuto.
+
 Las fotos en las que el modelo no ve un arma por encima del umbral (0,70) no
 generan alerta, igual que en la estación real. Los rostros siguen simulados:
 el reconocimiento facial se evalúa aparte con los voluntarios.
