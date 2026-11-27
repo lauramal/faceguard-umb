@@ -1,0 +1,56 @@
+<div class="indicadores">
+  <div class="indicador">
+    <span class="indicador-icono verde"><svg><use href="#i-usuario"/></svg></span>
+    <span class="indicador-valor">{{ indicadores.accesos_hoy }}</span>
+    <span class="indicador-texto">Identificados hoy</span>
+  </div>
+  <div class="indicador">
+    <span class="indicador-icono ambar"><svg><use href="#i-pregunta"/></svg></span>
+    <span class="indicador-valor">{{ indicadores.no_identificados }}</span>
+    <span class="indicador-texto">Sin identificar hoy</span>
+  </div>
+  <div class="indicador">
+    <span class="indicador-icono rojo"><svg><use href="#i-alerta"/></svg></span>
+    <span class="indicador-valor">{{ indicadores.alertas_abiertas }}</span>
+    <span class="indicador-texto">Alertas abiertas</span>
+  </div>
+  <div class="indicador">
+    <span class="indicador-icono morado"><svg><use href="#i-flecha"/></svg></span>
+    <span class="indicador-valor">{{ indicadores.escaladas }}</span>
+    <span class="indicador-texto">Escaladas</span>
+  </div>
+</div>
+
+<section class="tarjeta">
+  <div class="tarjeta-cabecera">
+    <h2>Últimos accesos</h2>
+    <a class="enlace" href="{{ url_for('web.registros') }}">Ver historial</a>
+  </div>
+  {% if accesos %}
+  <ul class="feed">
+    {% for r in accesos %}
+    <li class="feed-item">
+      {% if r.nombres %}
+      <span class="avatar pequeno">{{ r.nombres|iniciales(r.apellidos) }}</span>
+      {% else %}
+      <span class="avatar pequeno desconocido">?</span>
+      {% endif %}
+      <span class="feed-texto">
+        <strong>{% if r.nombres %}{{ r.nombres }} {{ r.apellidos }}{% else %}Sin identificar{% endif %}</strong>
+        <small>{{ (r.tipo_persona or 'verificación manual pendiente')|capitalize }} · {{ r.punto_acceso or '' }}</small>
+      </span>
+      <span class="feed-meta">
+        {% if r.resultado == 'identificado' %}
+        <span class="pastilla {{ 'verde' if r.tipo_evento == 'ingreso' else 'azul' }}">{{ r.tipo_evento|capitalize }}</span>
+        {% else %}
+        <span class="pastilla ambar">{{ r.resultado|replace('_', ' ')|capitalize }}</span>
+        {% endif %}
+        <time>{{ r.fecha_hora|hora }}</time>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="vacio">Todavía no hay registros de acceso.</p>
+  {% endif %}
+</section>

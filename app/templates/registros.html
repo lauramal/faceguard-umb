@@ -1,9 +1,13 @@
 {% extends "base.html" %}
-{% block titulo %}Registros | FaceGuard{% endblock %}
-{% block contenido %}
-<h1>Historial de accesos</h1>
+{% block titulo %}Historial | FaceGuard{% endblock %}
+{% block miga %}Consulta{% endblock %}
+{% block encabezado %}Historial de accesos{% endblock %}
+{% block acciones_superiores %}
+<span class="pastilla gris">{{ accesos|length }} registros</span>
+{% endblock %}
 
-<form class="filtros" method="get">
+{% block contenido %}
+<form class="tarjeta filtros" method="get">
   <label>Desde <input type="date" name="desde" value="{{ filtros.get('desde','') }}"></label>
   <label>Hasta <input type="date" name="hasta" value="{{ filtros.get('hasta','') }}"></label>
   <label>Punto de acceso
@@ -14,30 +18,46 @@
       {% endfor %}
     </select>
   </label>
-  <button type="submit">Filtrar</button>
+  <button type="submit" class="boton primario">Filtrar</button>
+  {% if filtros %}<a class="boton secundario" href="{{ url_for('web.registros') }}">Limpiar</a>{% endif %}
 </form>
 
-<p class="conteo">{{ accesos|length }} registros</p>
-
-<table>
-  <thead>
-    <tr><th>Fecha y hora</th><th>Persona</th><th>Documento</th><th>Tipo</th>
-        <th>Evento</th><th>Metodo</th><th>Resultado</th><th>Punto</th><th>Distancia</th></tr>
-  </thead>
-  <tbody>
-    {% for r in accesos %}
-    <tr>
-      <td>{{ r.fecha_hora }}</td>
-      <td>{% if r.nombres %}{{ r.nombres }} {{ r.apellidos }}{% else %}<em>sin identificar</em>{% endif %}</td>
-      <td>{{ r.documento or '' }}</td>
-      <td>{{ r.tipo_persona or '' }}</td>
-      <td><span class="evento {{ r.tipo_evento }}">{{ r.tipo_evento }}</span></td>
-      <td>{{ r.metodo }}</td>
-      <td>{{ r.resultado }}</td>
-      <td>{{ r.punto_acceso }}</td>
-      <td>{{ '%.2f'|format(r.distancia) if r.distancia is not none else '' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<section class="tarjeta sin-relleno">
+  {% if accesos %}
+  <div class="tabla-envoltura">
+  <table>
+    <thead>
+      <tr><th>Persona</th><th>Documento</th><th>Evento</th><th>Método</th>
+          <th>Resultado</th><th>Punto</th><th>Distancia</th><th>Fecha y hora</th></tr>
+    </thead>
+    <tbody>
+      {% for r in accesos %}
+      <tr>
+        <td>
+          <span class="celda-persona">
+            {% if r.nombres %}
+            <span class="avatar pequeno">{{ r.nombres|iniciales(r.apellidos) }}</span>
+            <span><strong>{{ r.nombres }} {{ r.apellidos }}</strong><small>{{ (r.tipo_persona or '')|capitalize }}</small></span>
+            {% else %}
+            <span class="avatar pequeno desconocido">?</span>
+            <span><em>sin identificar</em></span>
+            {% endif %}
+          </span>
+        </td>
+        <td class="mono">{{ r.documento or '' }}</td>
+        <td><span class="pastilla {{ 'verde' if r.tipo_evento == 'ingreso' else 'azul' }}">{{ r.tipo_evento|capitalize }}</span></td>
+        <td>{{ r.metodo }}</td>
+        <td><span class="pastilla {{ 'gris' if r.resultado == 'identificado' else 'ambar' }}">{{ r.resultado|replace('_', ' ')|capitalize }}</span></td>
+        <td>{{ r.punto_acceso }}</td>
+        <td class="mono">{{ '%.2f'|format(r.distancia) if r.distancia is not none else '' }}</td>
+        <td class="mono">{{ r.fecha_hora|fecha_corta }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="vacio">No hay registros con esos filtros.</p>
+  {% endif %}
+</section>
 {% endblock %}

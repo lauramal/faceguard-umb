@@ -5,7 +5,7 @@ necesitan cámara, base de datos ni un computador potente.
 
 ## 1. Las pruebas automáticas en GitHub (no hay que instalar nada)
 
-Cada vez que se sube un cambio, GitHub ejecuta las 325 pruebas del proyecto,
+Cada vez que se sube un cambio, GitHub ejecuta las 333 pruebas del proyecto,
 incluidas las de integración y caja negra contra un PostgreSQL real que crea
 para la ocasión.
 
@@ -34,8 +34,33 @@ python scripts/demo.py
 
 Codespaces muestra un aviso para abrir el puerto 5000 en el navegador.
 
-**En un computador con Python 3.11 o 3.12:** los mismos dos comandos, y abrir
-http://localhost:5000.
+**En un computador con Python 3.11 a 3.14:** los mismos dos comandos, y abrir
+http://127.0.0.1:5000.
+
+> **En Mac:** el puerto 5000 lo usa el Receptor de AirPlay y responde
+> "Se denegó el acceso" (error 403). Use otro puerto con
+> `PORT=5050 python scripts/demo.py` y abra http://127.0.0.1:5050.
+
+### Fotos reales con las detecciones del modelo
+
+Sin más, la estación simulada envía un fotograma dibujado. Para que las
+alertas muestren **fotos reales del conjunto de prueba con lo que detectó el
+YOLOv8 entrenado** (clase, confianza y cajas):
+
+1. Abra `scripts/entrenar_yolo.ipynb` en Colab y ejecute las secciones 1, 2 y
+   9. La sección 9 genera y descarga `datos_demo.zip`.
+2. Descomprímalo dentro del proyecto, de modo que quede
+   `datos_demo/imagenes/` y `datos_demo/detecciones.json`.
+3. Vuelva a correr `python scripts/demo.py`. La terminal dice
+   `modo BANCO` y la franja amarilla lo indica.
+
+Si sube la carpeta `datos_demo/` al repositorio, la demostración funciona con
+fotos reales en cualquier equipo. Las fotos son del conjunto Güvenlik Sistemi
+(licencia CC BY 4.0), y la atribución va en `datos_demo/ATRIBUCION.md`.
+
+Las fotos en las que el modelo no ve un arma por encima del umbral (0,70) no
+generan alerta, igual que en la estación real. Los rostros siguen simulados:
+el reconocimiento facial se evalúa aparte con los voluntarios.
 
 Usuarios de la demostración:
 

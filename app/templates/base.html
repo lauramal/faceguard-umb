@@ -4,38 +4,95 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block titulo %}FaceGuard{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/estilo.css') }}">
 </head>
-<body>
+<body class="{% block clase_body %}{% endblock %}">
+  {# Iconos reutilizables (trazos simples, sin librerias externas) #}
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-escudo" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="3" width="7" height="5" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="12" width="7" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="16" width="7" height="5" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-lista" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-salir" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 012 2v12a2 2 0 01-2 2h-3M10 17l5-5-5-5M15 12H4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-alerta" viewBox="0 0 24 24"><path d="M12 3l9.5 17h-19L12 3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4M12 17.5h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-usuario" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-pregunta" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-flecha" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-imagen" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M21 16l-5-5-8 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6-5.5-6-11a6 6 0 1112 0c0 5.5-6 11-6 11z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-reloj" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-capas" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+  </svg>
+
   {% if config.get('DEMO') %}
-  <div class="franja-demo">Modo demostración: base de datos en memoria y estación de captura simulada. Los datos son de ejemplo y no son resultados de evaluación.</div>
+  <div class="franja-demo">
+    <span class="punto-demo"></span>
+    Modo demostración.
+    {{ config.get('DEMO_FUENTE') or 'Base de datos en memoria y estación de captura simulada.' }}
+    Los datos son de ejemplo y no son resultados de evaluación.
+  </div>
   {% endif %}
+
   {% if usuario %}
-  <header class="barra">
-    <span class="marca"><strong>FaceGuard</strong></span>
-    <nav>
-      <a href="{{ url_for('web.panel') }}">Panel</a>
-      <a href="{{ url_for('web.registros') }}">Registros</a>
-    </nav>
-    <span class="usuario">{{ usuario.nombre }} <em>{{ usuario.rol }}</em>
-      <a href="{{ url_for('web.logout') }}">Salir</a>
-    </span>
-  </header>
+  <div class="app">
+    <aside class="lateral">
+      <a class="marca" href="{{ url_for('web.panel') }}">
+        <span class="logo"><svg><use href="#i-escudo"/></svg></span>
+        <span><strong>FaceGuard</strong><small>Seguridad en accesos</small></span>
+      </a>
+
+      <nav class="menu">
+        <span class="menu-titulo">Monitoreo</span>
+        <a href="{{ url_for('web.panel') }}" class="{{ 'activo' if seccion != 'registros' }}">
+          <svg><use href="#i-panel"/></svg> Panel en vivo
+        </a>
+        <a href="{{ url_for('web.registros') }}" class="{{ 'activo' if seccion == 'registros' }}">
+          <svg><use href="#i-lista"/></svg> Historial de accesos
+        </a>
+      </nav>
+
+      <div class="tarjeta-usuario">
+        <span class="avatar">{{ usuario.nombre|iniciales }}</span>
+        <span class="datos-usuario">
+          <strong>{{ usuario.nombre }}</strong>
+          <small>{{ usuario.rol|capitalize }}</small>
+        </span>
+        <a class="boton-icono" href="{{ url_for('web.logout') }}" title="Cerrar sesión" aria-label="Cerrar sesión">
+          <svg><use href="#i-salir"/></svg>
+        </a>
+      </div>
+    </aside>
+
+    <div class="contenido">
+      <header class="superior">
+        <div>
+          <p class="miga">{% block miga %}Monitoreo{% endblock %}</p>
+          <h1>{% block encabezado %}FaceGuard{% endblock %}</h1>
+        </div>
+        <div class="superior-derecha">
+          {% block acciones_superiores %}{% endblock %}
+        </div>
+      </header>
+
+      <main>
+        {% with mensajes = get_flashed_messages(with_categories=true) %}
+          {% for categoria, mensaje in mensajes %}
+            <div class="aviso {{ categoria }}">{{ mensaje }}</div>
+          {% endfor %}
+        {% endwith %}
+
+        {% block contenido %}{% endblock %}
+      </main>
+
+      <footer>FaceGuard · Prototipo académico de seguridad para instituciones de educación superior</footer>
+    </div>
+  </div>
+  {% else %}
+    {% block publico %}{% endblock %}
   {% endif %}
 
-  <main>
-    {% with mensajes = get_flashed_messages(with_categories=true) %}
-      {% for categoria, mensaje in mensajes %}
-        <p class="aviso {{ categoria }}">{{ mensaje }}</p>
-      {% endfor %}
-    {% endwith %}
-
-    {% block contenido %}{% endblock %}
-  </main>
   {% block scripts %}{% endblock %}
-
-  <footer>
-    <p>FaceGuard. Prototipo academico de control de acceso para instituciones de educacion superior.</p>
-  </footer>
 </body>
 </html>

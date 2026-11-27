@@ -11,7 +11,7 @@ otro sitio no puede atender o cerrar alertas en nombre del guardia.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import (
     Blueprint,
@@ -40,6 +40,40 @@ bp = Blueprint("web", __name__)
 
 ROLES_QUE_ATIENDEN = ("administrador", "guardia")
 SEGUNDOS_REFRESCO = 10
+
+_MESES = ("ene", "feb", "mar", "abr", "may", "jun",
+          "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+@bp.app_template_filter("hora")
+def filtro_hora(valor):
+    """Hora legible para el panel: '23:39:49'."""
+    if isinstance(valor, datetime):
+        return valor.strftime("%H:%M:%S")
+    return valor or ""
+
+
+@bp.app_template_filter("fecha_corta")
+def filtro_fecha_corta(valor):
+    """Fecha legible: 'hoy, 23:39' o '26 nov, 23:39'."""
+    if not isinstance(valor, datetime):
+        return valor or ""
+    hoy = datetime.now().date()
+    if valor.date() == hoy:
+        dia = "hoy"
+    elif valor.date() == hoy - timedelta(days=1):
+        dia = "ayer"
+    else:
+        dia = f"{valor.day} {_MESES[valor.month - 1]}"
+    return f"{dia}, {valor.strftime('%H:%M')}"
+
+
+@bp.app_template_filter("iniciales")
+def filtro_iniciales(nombres, apellidos=None):
+    if apellidos is None:
+        partes = (nombres or "?").split()
+        return "".join(p[:1] for p in partes[:2]).upper()
+    return f"{(nombres or '?')[:1]}{apellidos[:1]}".upper()
 
 
 @bp.get("/")
@@ -80,16 +114,43 @@ def _contexto_alertas():
     }
 
 
+def _indicadores(alertas):
+    """Cifras del dia para las tarjetas superiores del panel."""
+    inicio_dia = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    hoy = repositorio.listar_accesos(desde=inicio_dia, limite=5000)
+    return {
+        "accesos_hoy": sum(1 for r in hoy if r.get("resultado") == "identificado"),
+        "no_identificados": sum(1 for r in hoy if r.get("resultado") != "identificado"),
+        "alertas_abiertas": len(alertas),
+        "escaladas": sum(1 for a in alertas if a.get("estado") == "escalada"),
+    }
+
+
 @bp.get("/panel")
 @requiere_sesion
 def panel():
     """Panel de monitoreo: alertas abiertas y ultimos accesos."""
+    contexto = _contexto_alertas()
     return render_template(
         "panel.html",
         usuario=g.usuario,
-        accesos=repositorio.listar_accesos(limite=20),
+        accesos=repositorio.listar_accesos(limite=12),
         segundos_refresco=SEGUNDOS_REFRESCO,
-        **_contexto_alertas(),
+        indicadores=_indicadores(contexto["alertas"]),
+        **contexto,
+    )
+
+
+@bp.get("/panel/accesos")
+@requiere_sesion
+def panel_accesos():
+    """Fragmento con los ultimos accesos y las cifras del dia."""
+    contexto = _contexto_alertas()
+    return render_template(
+        "_accesos.html",
+        usuario=g.usuario,
+        accesos=repositorio.listar_accesos(limite=12),
+        indicadores=_indicadores(contexto["alertas"]),
     )
 
 
@@ -184,6 +245,7 @@ def registros():
     return render_template(
         "registros.html",
         usuario=g.usuario,
+        seccion="registros",
         puntos=repositorio.listar_puntos_acceso(),
         filtros=request.args,
         accesos=repositorio.listar_accesos(

@@ -1,55 +1,54 @@
 {% extends "base.html" %}
 {% block titulo %}Panel | FaceGuard{% endblock %}
+{% block miga %}Monitoreo{% endblock %}
+{% block encabezado %}Panel de seguridad{% endblock %}
+{% block acciones_superiores %}
+<span class="en-vivo"><span class="pulso"></span> En vivo</span>
+<span class="reloj" id="reloj">--:--:--</span>
+{% endblock %}
+
 {% block contenido %}
-<h1>Panel de seguridad</h1>
+<div class="rejilla-panel">
+  <div class="columna-principal">
+    <div id="zona-alertas" data-url="{{ url_for('web.panel_alertas') }}"
+         data-segundos="{{ segundos_refresco }}">
+      {% include "_alertas.html" %}
+    </div>
+  </div>
 
-<div id="zona-alertas" data-url="{{ url_for('web.panel_alertas') }}"
-     data-segundos="{{ segundos_refresco }}">
-  {% include "_alertas.html" %}
+  <div class="columna-lateral">
+    <div id="zona-accesos" data-url="{{ url_for('web.panel_accesos') }}">
+      {% include "_accesos.html" %}
+    </div>
+    <p class="refresco">Se actualiza solo cada {{ segundos_refresco }} segundos.</p>
+  </div>
 </div>
-<p class="refresco">La lista de alertas se actualiza sola cada {{ segundos_refresco }} segundos.</p>
 
-<section>
-  <h2>Ultimos accesos</h2>
-  {% if accesos %}
-  <table>
-    <thead>
-      <tr><th>Fecha y hora</th><th>Persona</th><th>Tipo</th>
-          <th>Evento</th><th>Metodo</th><th>Resultado</th><th>Punto</th></tr>
-    </thead>
-    <tbody>
-      {% for r in accesos %}
-      <tr>
-        <td>{{ r.fecha_hora }}</td>
-        <td>{% if r.nombres %}{{ r.nombres }} {{ r.apellidos }}{% else %}<em>sin identificar</em>{% endif %}</td>
-        <td>{{ r.tipo_persona or '' }}</td>
-        <td><span class="evento {{ r.tipo_evento }}">{{ r.tipo_evento }}</span></td>
-        <td>{{ r.metodo }}</td>
-        <td>{{ r.resultado }}</td>
-        <td>{{ r.punto_acceso }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="vacio">Todavia no hay registros de acceso.</p>
-  {% endif %}
-</section>
+<dialog id="visor" class="visor">
+  <div class="visor-cabecera">
+    <strong id="visor-titulo">Evidencia</strong>
+    <button type="button" class="boton-icono" data-cerrar aria-label="Cerrar">✕</button>
+  </div>
+  <img id="visor-imagen" alt="Fotograma de la detección">
+  <p class="visor-nota">Fotograma enviado por la estación de captura. Cada consulta queda registrada en la bitácora.</p>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
 <noscript><meta http-equiv="refresh" content="{{ segundos_refresco }}"></noscript>
 <script>
 (function () {
-  var zona = document.getElementById("zona-alertas");
-  if (!zona) { return; }
-  var url = zona.dataset.url;
-  var cada = (parseInt(zona.dataset.segundos, 10) || 10) * 1000;
-  function actualizar() {
-    // No se refresca mientras el guardia escribe en un formulario.
+  var alertas = document.getElementById("zona-alertas");
+  var accesos = document.getElementById("zona-accesos");
+  if (!alertas) { return; }
+  var cada = (parseInt(alertas.dataset.segundos, 10) || 10) * 1000;
+
+  function refrescar(zona) {
+    if (!zona) { return; }
+    // No se refresca mientras el guardia marca una casilla del formulario.
     if (zona.contains(document.activeElement) &&
         document.activeElement.tagName === "INPUT") { return; }
-    fetch(url, { credentials: "same-origin" })
+    fetch(zona.dataset.url, { credentials: "same-origin" })
       .then(function (r) {
         if (r.status === 200) { return r.text(); }
         if (r.redirected || r.status === 401) { window.location = "/login"; }
@@ -58,7 +57,24 @@
       .then(function (html) { if (html !== null) { zona.innerHTML = html; } })
       .catch(function () { /* sin red: se intenta en el siguiente ciclo */ });
   }
-  setInterval(actualizar, cada);
+  setInterval(function () { refrescar(alertas); refrescar(accesos); }, cada);
+
+  // Visor de evidencia: la imagen se pide solo cuando el guardia la abre.
+  var visor = document.getElementById("visor");
+  document.addEventListener("click", function (e) {
+    var boton = e.target.closest("[data-evidencia]");
+    if (boton && visor && visor.showModal) {
+      e.preventDefault();
+      document.getElementById("visor-imagen").src = boton.dataset.evidencia;
+      document.getElementById("visor-titulo").textContent = boton.dataset.titulo || "Evidencia";
+      visor.showModal();
+    }
+    if (e.target.closest("[data-cerrar]") || e.target === visor) { visor.close(); }
+  });
+
+  var reloj = document.getElementById("reloj");
+  function hora() { reloj.textContent = new Date().toLocaleTimeString("es-CO", {hour12: false}); }
+  if (reloj) { hora(); setInterval(hora, 1000); }
 })();
 </script>
 {% endblock %}

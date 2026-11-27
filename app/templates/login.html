@@ -1,17 +1,58 @@
 {% extends "base.html" %}
-{% block titulo %}Ingreso | FaceGuard UMB{% endblock %}
-{% block contenido %}
-<section class="acceso">
-  <h1>FaceGuard <strong>UMB</strong></h1>
-  <p class="sub">Panel de control de acceso</p>
-  <form method="post">
-    <label for="correo">Correo institucional</label>
-    <input id="correo" name="correo" type="email" required autocomplete="username">
+{% block titulo %}Ingreso | FaceGuard{% endblock %}
+{% block clase_body %}pagina-acceso{% endblock %}
+{% block publico %}
+<div class="acceso">
+  <section class="acceso-marca">
+    <div class="marca grande">
+      <span class="logo"><svg><use href="#i-escudo"/></svg></span>
+      <span><strong>FaceGuard</strong><small>Seguridad en accesos</small></span>
+    </div>
 
-    <label for="contrasena">Contrasena</label>
-    <input id="contrasena" name="contrasena" type="password" required autocomplete="current-password">
+    <div class="acceso-mensaje">
+      <h2>Cada alerta, unida al ingreso en que ocurrió.</h2>
+      <p>Detección de armas visibles y gestión de alertas integradas al
+         reconocimiento facial en los puntos de acceso de instituciones de
+         educación superior.</p>
+    </div>
 
-    <button type="submit">Ingresar</button>
-  </form>
-</section>
+    <ul class="acceso-puntos">
+      <li><svg><use href="#i-alerta"/></svg> Alertas con evidencia y escalamiento automático</li>
+      <li><svg><use href="#i-usuario"/></svg> La persona identificada queda como contexto, no como culpable</li>
+      <li><svg><use href="#i-capas"/></svg> Historial consultable y bitácora de auditoría</li>
+    </ul>
+  </section>
+
+  <section class="acceso-formulario">
+    <form method="post" class="tarjeta formulario">
+      <h1>Iniciar sesión</h1>
+      <p class="sub">Ingrese con su cuenta institucional.</p>
+
+      {% with mensajes = get_flashed_messages(with_categories=true) %}
+        {% for categoria, mensaje in mensajes %}
+          <div class="aviso {{ categoria }}">{{ mensaje }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <label for="correo">Correo institucional</label>
+      <input id="correo" name="correo" type="email" required autocomplete="username"
+             placeholder="nombre@institucion.edu.co">
+
+      <label for="contrasena">Contraseña</label>
+      <input id="contrasena" name="contrasena" type="password" required
+             autocomplete="current-password" placeholder="••••••••">
+
+      <button type="submit" class="boton primario ancho">Ingresar</button>
+
+      {% if config.get('DEMO') %}
+      <div class="ayuda-demo">
+        <strong>Cuentas de la demostración</strong>
+        <span>guardia@demo.edu · Guardia-2026</span>
+        <span>admin@demo.edu · Admin-2026</span>
+        <span>consulta@demo.edu · Consulta-2026</span>
+      </div>
+      {% endif %}
+    </form>
+  </section>
+</div>
 {% endblock %}
