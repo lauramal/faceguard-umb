@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block titulo %}Seguimiento de alertas | FaceGuard{% endblock %}
+{% block miga %}Seguimiento{% endblock %}
+{% block encabezado %}Seguimiento de alertas{% endblock %}
+{% block acciones_superiores %}
+<span class="pastilla gris">{{ alertas|length }} alertas</span>
+{% endblock %}
+
+{% block contenido %}
+<nav class="pestanas grande" aria-label="Estado de la alerta">
+  {% for clave, nombre in opciones_estado.items() %}
+  {% set args = dict(filtros) %}{% set _ = args.update({'estado': clave}) %}
+  <a href="{{ url_for('web.seguimiento_alertas', **args) }}"
+     class="pestana {{ 'activa' if clave == estado }}">
+    {{ nombre }} <span class="cuenta">{{ cuentas[clave] }}</span>
+  </a>
+  {% endfor %}
+</nav>
+
+<form class="tarjeta filtros" method="get">
+  <input type="hidden" name="estado" value="{{ estado }}">
+  <label>Tipo de arma
+    <select name="tipo">
+      <option value="">Todas</option>
+      <option value="arma_fuego" {% if filtros.get('tipo') == 'arma_fuego' %}selected{% endif %}>Arma de fuego</option>
+      <option value="arma_blanca" {% if filtros.get('tipo') == 'arma_blanca' %}selected{% endif %}>Arma blanca</option>
+    </select>
+  </label>
+  <label>Desde <input type="date" name="desde" value="{{ filtros.get('desde','') }}"></label>
+  <label>Hasta <input type="date" name="hasta" value="{{ filtros.get('hasta','') }}"></label>
+  <button type="submit" class="boton primario">Filtrar</button>
+  {% if filtros.get('tipo') or filtros.get('desde') or filtros.get('hasta') %}
+  <a class="boton secundario" href="{{ url_for('web.seguimiento_alertas', estado=estado) }}">Limpiar</a>
+  {% endif %}
+</form>
+
+<section class="tarjeta sin-relleno">
+  {% if alertas %}
+  <div class="tabla-envoltura">
+  <table>
+    <thead>
+      <tr><th>Alerta</th><th>Estado</th><th>Persona de contexto</th><th>Portador verificado</th>
+          <th>Atendida por</th><th>Respuesta</th><th>Confianza</th><th>Fecha</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for a in alertas %}
+      {% set nombre_arma = 'Arma de fuego' if a.tipo_arma == 'arma_fuego' else ('Arma blanca' if a.tipo_arma == 'arma_blanca' else 'Arma') %}
+      <tr>
+        <td>
+          <strong class="celda-titulo">{{ nombre_arma }} <span class="numero">#{{ a.alerta_id }}</span></strong>
+          <small class="tenue">{{ a.punto_acceso }} · {{ a.detecciones }} deteccion{{ 'es' if a.detecciones != 1 else '' }}</small>
+        </td>
+        <td>
+          {% if a.desenlace == 'confirmada' %}<span class="pastilla rojo">Arma confirmada</span>
+          {% elif a.desenlace == 'falso_positivo' %}<span class="pastilla gris">Falso positivo</span>
+          {% elif a.estado == 'escalada' %}<span class="pastilla urgente">Escalada</span>
+          {% elif a.estado == 'en_atencion' %}<span class="pastilla azul">En atención</span>
+          {% else %}<span class="pastilla ambar">{{ a.estado|replace('_', ' ')|capitalize }}</span>{% endif %}
+          {% if a.fecha_escalamiento and a.desenlace %}<small class="tenue">pasó por escalamiento</small>{% endif %}
+        </td>
+        <td>{% if a.contexto_nombres %}{{ a.contexto_nombres }} {{ a.contexto_apellidos }}{% else %}<span class="tenue">Sin persona</span>{% endif %}</td>
+        <td>{% if a.portador_nombres %}<strong>{{ a.portador_nombres }} {{ a.portador_apellidos or '' }}</strong>{% else %}<span class="tenue">No registrado</span>{% endif %}</td>
+        <td>{{ a.atendida_por_nombre or '' }}</td>
+        <td class="mono">{% if a.minutos_respuesta is defined %}{{ a.minutos_respuesta }} min{% endif %}</td>
+        <td class="mono">{{ '%.2f'|format(a.confianza) }}</td>
+        <td class="mono">{{ a.fecha_hora|fecha_corta }}</td>
+        <td class="acciones-fila">
+          {% if puede_atender and a.imagen_url %}
+          <a class="boton secundario pequeno" href="{{ url_for('web.evidencia_alerta', alerta_id=a.alerta_id) }}"
+             data-evidencia="{{ url_for('web.evidencia_alerta', alerta_id=a.alerta_id) }}"
+             data-titulo="{{ nombre_arma }} #{{ a.alerta_id }}" target="_blank" rel="noopener">Evidencia</a>
+          {% endif %}
+          {% if a.estado in ('generada', 'notificada', 'escalada', 'en_atencion') %}
+          <a class="boton primario pequeno" href="{{ url_for('web.panel') }}#alerta-{{ a.alerta_id }}">Gestionar</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="vacio">No hay alertas con esos filtros.</p>
+  {% endif %}
+</section>
+
+<dialog id="visor" class="visor">
+  <div class="visor-cabecera">
+    <strong id="visor-titulo">Evidencia</strong>
+    <button type="button" class="boton-icono" data-cerrar aria-label="Cerrar">✕</button>
+  </div>
+  <img id="visor-imagen" alt="Fotograma de la detección">
+  <p class="visor-nota">Fotograma enviado por la estación de captura. Cada consulta queda registrada en la bitácora.</p>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var visor = document.getElementById("visor");
+  document.addEventListener("click", function (e) {
+    var boton = e.target.closest("[data-evidencia]");
+    if (boton && visor && visor.showModal) {
+      e.preventDefault();
+      document.getElementById("visor-imagen").src = boton.dataset.evidencia;
+      document.getElementById("visor-titulo").textContent = boton.dataset.titulo || "Evidencia";
+      visor.showModal();
+    }
+    if (e.target.closest("[data-cerrar]") || e.target === visor) { visor.close(); }
+  });
+})();
+</script>
+{% endblock %}

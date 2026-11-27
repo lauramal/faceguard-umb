@@ -107,7 +107,7 @@ pytest                        # unitarias, con cobertura
 TEST_DATABASE_URL=postgresql://usuario:clave@localhost/faceguard_test pytest
 ```
 
-La suite tiene **333 pruebas** y **93 % de cobertura**: 282 corren sin base de
+La suite tiene **337 pruebas** y **93 % de cobertura**: 286 corren sin base de
 datos y 51 ejecutan el esquema real sobre PostgreSQL (integración y caja
 negra).
 

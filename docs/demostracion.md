@@ -5,7 +5,7 @@ necesitan cámara, base de datos ni un computador potente.
 
 ## 1. Las pruebas automáticas en GitHub (no hay que instalar nada)
 
-Cada vez que se sube un cambio, GitHub ejecuta las 333 pruebas del proyecto,
+Cada vez que se sube un cambio, GitHub ejecuta las 337 pruebas del proyecto,
 incluidas las de integración y caja negra contra un PostgreSQL real que crea
 para la ocasión.
 

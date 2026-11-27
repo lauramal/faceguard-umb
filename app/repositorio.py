@@ -432,6 +432,14 @@ def asignar_portador(alerta_id: int, persona_id: int) -> int:
     )
 
 
+def registrar_desenlace(alerta_id: int, desenlace: str) -> int:
+    """Guarda como termino la alerta (confirmada o falso positivo) y cuando."""
+    return ejecutar(
+        "UPDATE alerta_arma SET desenlace = %s, fecha_cierre = NOW() WHERE id = %s",
+        (desenlace, alerta_id),
+    )
+
+
 def obtener_alerta(alerta_id: int) -> Optional[dict[str, Any]]:
     filas = consultar("SELECT * FROM alerta_arma WHERE id = %s", (alerta_id,))
     return filas[0] if filas else None

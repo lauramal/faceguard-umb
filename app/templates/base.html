@@ -45,12 +45,21 @@
 
       <nav class="menu">
         <span class="menu-titulo">Monitoreo</span>
-        <a href="{{ url_for('web.panel') }}" class="{{ 'activo' if seccion != 'registros' }}">
+        <a href="{{ url_for('web.panel') }}" class="{{ 'activo' if not seccion }}">
           <svg><use href="#i-panel"/></svg> Panel en vivo
+        </a>
+        <a href="{{ url_for('web.seguimiento_alertas') }}" class="{{ 'activo' if seccion == 'alertas' }}">
+          <svg><use href="#i-alerta"/></svg> Seguimiento de alertas
         </a>
         <a href="{{ url_for('web.registros') }}" class="{{ 'activo' if seccion == 'registros' }}">
           <svg><use href="#i-lista"/></svg> Historial de accesos
         </a>
+        {% if usuario.rol == 'administrador' %}
+        <span class="menu-titulo">Administración</span>
+        <a href="{{ url_for('web.bitacora') }}" class="{{ 'activo' if seccion == 'bitacora' }}">
+          <svg><use href="#i-reloj"/></svg> Bitácora de auditoría
+        </a>
+        {% endif %}
       </nav>
 
       <div class="tarjeta-usuario">

@@ -203,6 +203,7 @@ class RepositorioFalso:
             "tipo_arma": tipo_arma, "confianza": confianza, "estado": "generada",
             "atendida_por": None, "fecha_escalamiento": None, "imagen_url": imagen_url,
             "detecciones": 1, "ultima_deteccion": momento, "fecha_hora": momento,
+            "fecha_atencion": None, "desenlace": None, "fecha_cierre": None,
         }
         return aid
 
@@ -235,6 +236,13 @@ class RepositorioFalso:
         alerta["portador_id"] = persona_id
         return 1
 
+    def registrar_desenlace(self, alerta_id, desenlace):
+        if desenlace not in ("confirmada", "falso_positivo"):
+            raise ValueError(f"desenlace invalido: {desenlace}")
+        self.alertas[alerta_id]["desenlace"] = desenlace
+        self.alertas[alerta_id]["fecha_cierre"] = datetime.now()
+        return 1
+
     def obtener_alerta(self, alerta_id):
         alerta = self.alertas.get(alerta_id)
         return copy.deepcopy(alerta) if alerta else None
@@ -245,6 +253,7 @@ class RepositorioFalso:
         self.alertas[alerta_id]["estado"] = estado
         if usuario_id is not None:
             self.alertas[alerta_id]["atendida_por"] = usuario_id
+            self.alertas[alerta_id]["fecha_atencion"] = datetime.now()
         if escalada:
             self.alertas[alerta_id]["fecha_escalamiento"] = datetime.now()
         return 1
@@ -260,6 +269,8 @@ class RepositorioFalso:
         fila["contexto_tipo_persona"] = contexto.get("tipo_persona")
         portador = self.personas.get(a["portador_id"]) or {}
         fila["portador_nombres"] = portador.get("nombres")
+        fila["portador_apellidos"] = portador.get("apellidos")
+        fila["atendida_por_nombre"] = (self.usuarios.get(a.get("atendida_por")) or {}).get("nombre")
         return fila
 
     def listar_alertas(self, estado=None, limite=100, abiertas=False):
@@ -268,8 +279,9 @@ class RepositorioFalso:
                      if a["estado"] in ("generada", "notificada", "escalada", "en_atencion")]
             filas.sort(key=lambda a: (a["estado"] != "escalada", -a["id"]))
         else:
-            filas = [a for a in self.alertas.values()
-                     if estado is None or a["estado"] == estado]
+            filas = sorted((a for a in self.alertas.values()
+                            if estado is None or a["estado"] == estado),
+                           key=lambda a: a["fecha_hora"], reverse=True)
         return [self._como_vista(a) for a in filas][:limite]
 
     def alertas_sin_atender(self, minutos):
@@ -379,7 +391,12 @@ class RepositorioFalso:
         return aid
 
     def listar_auditoria(self, limite=200):
-        return list(reversed(self.auditoria))[:limite]
+        filas = []
+        for a in reversed(self.auditoria):
+            fila = dict(a)
+            fila["usuario"] = (self.usuarios.get(a["usuario_id"]) or {}).get("nombre")
+            filas.append(fila)
+        return filas[:limite]
 
     def resumen_accesos(self, desde, hasta):
         return {"accesos": [], "alertas": []}

@@ -143,6 +143,7 @@ def resolver(
     cambiar_estado(alerta_id, estado, usuario_id, repo)
     if portador_id is not None:
         repo.asignar_portador(alerta_id, portador_id)
+    repo.registrar_desenlace(alerta_id, estado)
     resultado = cambiar_estado(alerta_id, CERRADA, repositorio=repo)
     resultado["desenlace"] = estado
     resultado["portador_id"] = portador_id

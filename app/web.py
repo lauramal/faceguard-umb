@@ -104,12 +104,34 @@ def logout():
     return redirect(url_for("web.login"))
 
 
+# Pestanas del panel: que alertas abiertas se ven
+VISTAS_PANEL = {
+    "todas": ("Todas", None),
+    "escaladas": ("Escaladas", ("escalada",)),
+    "nuevas": ("Nuevas", ("generada", "notificada")),
+    "en_atencion": ("En atención", ("en_atencion",)),
+}
+
+
 def _contexto_alertas():
     # Se escala lo pendiente antes de mostrar, por si el servidor estuvo
     # suspendido y la tarea de fondo no corrio.
     servicio_alertas.escalar_pendientes()
+    abiertas = repositorio.listar_alertas(abiertas=True)
+    ver = request.args.get("ver", "todas")
+    if ver not in VISTAS_PANEL:
+        ver = "todas"
+    estados = VISTAS_PANEL[ver][1]
+    pestanas = [
+        {"clave": clave, "nombre": nombre,
+         "cuenta": sum(1 for a in abiertas if est is None or a["estado"] in est)}
+        for clave, (nombre, est) in VISTAS_PANEL.items()
+    ]
     return {
-        "alertas": repositorio.listar_alertas(abiertas=True),
+        "alertas": abiertas,
+        "visibles": [a for a in abiertas if estados is None or a["estado"] in estados],
+        "ver": ver,
+        "pestanas": pestanas,
         "puede_atender": g.usuario["rol"] in ROLES_QUE_ATIENDEN,
     }
 
@@ -228,6 +250,98 @@ def evidencia_alerta(alerta_id: int):
         g.usuario["id"], "ver_evidencia", "alerta_arma", alerta_id
     )
     return Response(datos, mimetype=tipo, headers={"Cache-Control": "no-store"})
+
+
+# Filtros del seguimiento de alertas
+FILTROS_ESTADO = {
+    "todas": "Todas",
+    "abiertas": "Abiertas",
+    "escaladas": "Escaladas",
+    "confirmadas": "Arma confirmada",
+    "falsos": "Falso positivo",
+}
+
+
+def _coincide_estado(alerta, filtro):
+    if filtro == "abiertas":
+        return alerta["estado"] in repositorio.ESTADOS_ABIERTOS
+    if filtro == "escaladas":
+        return alerta.get("fecha_escalamiento") is not None
+    if filtro == "confirmadas":
+        return alerta.get("desenlace") == "confirmada"
+    if filtro == "falsos":
+        return alerta.get("desenlace") == "falso_positivo"
+    return True
+
+
+def _fecha_param(nombre):
+    valor = request.args.get(nombre)
+    try:
+        return datetime.fromisoformat(valor) if valor else None
+    except ValueError:
+        return None
+
+
+@bp.get("/alertas")
+@requiere_sesion
+def seguimiento_alertas():
+    """Historial de alertas con filtros, para hacer seguimiento (CU-09)."""
+    servicio_alertas.escalar_pendientes()
+    todas = repositorio.listar_alertas(limite=1000)
+    estado = request.args.get("estado", "todas")
+    if estado not in FILTROS_ESTADO:
+        estado = "todas"
+    tipo = request.args.get("tipo", "")
+    desde, hasta = _fecha_param("desde"), _fecha_param("hasta")
+    if hasta is not None:
+        hasta = hasta + timedelta(days=1)          # incluye todo el dia final
+
+    def pasa(a, con_estado=True):
+        if con_estado and not _coincide_estado(a, estado):
+            return False
+        if tipo and a["tipo_arma"] != tipo:
+            return False
+        if desde and a["fecha_hora"] < desde:
+            return False
+        if hasta and a["fecha_hora"] >= hasta:
+            return False
+        return True
+
+    base = [a for a in todas if pasa(a, con_estado=False)]
+    filas = [a for a in base if _coincide_estado(a, estado)]
+    for a in filas:
+        if a.get("fecha_atencion") and a.get("fecha_hora"):
+            a["minutos_respuesta"] = max(
+                0, round((a["fecha_atencion"] - a["fecha_hora"]).total_seconds() / 60, 1))
+    cuentas = {clave: sum(1 for a in base if _coincide_estado(a, clave))
+               for clave in FILTROS_ESTADO}
+    return render_template(
+        "alertas.html",
+        usuario=g.usuario,
+        seccion="alertas",
+        alertas=filas,
+        filtros=request.args,
+        estado=estado,
+        opciones_estado=FILTROS_ESTADO,
+        cuentas=cuentas,
+        puede_atender=g.usuario["rol"] in ROLES_QUE_ATIENDEN,
+    )
+
+
+@bp.get("/bitacora")
+@requiere_sesion
+def bitacora():
+    """Bitacora de auditoria, solo para el administrador (CU-14)."""
+    if g.usuario["rol"] != "administrador":
+        repositorio.registrar_auditoria(
+            g.usuario["id"], "acceso_denegado", "endpoint", None, "GET /bitacora")
+        abort(403)
+    return render_template(
+        "bitacora.html",
+        usuario=g.usuario,
+        seccion="bitacora",
+        registros=repositorio.listar_auditoria(300),
+    )
 
 
 @bp.get("/registros")

@@ -83,3 +83,51 @@ class TestBancoDeEscenas:
     def test_sin_banco_usa_el_fotograma_sintetico(self, tmp_path):
         from scripts.demo import Banco
         assert Banco(tmp_path / "no_existe").modo == "sintetico"
+
+
+def _alerta(repo, estado="notificada", tipo="arma_fuego", **extra):
+    aid = repo.crear_alerta(camara_id=1, punto_acceso_id=1, tipo_arma=tipo, confianza=0.9, **extra)
+    repo.alertas[aid]["estado"] = estado
+    return aid
+
+
+class TestSeguimientoDeAlertas:
+    def test_el_desenlace_queda_guardado_al_cerrar(self, client, repo):
+        from app.servicios import alertas as servicio
+        aid = _alerta(repo, "en_atencion")
+        repo.alertas[aid]["atendida_por"] = 7
+        servicio.resolver(aid, 7, confirmada=False, repositorio=repo)
+        assert repo.alertas[aid]["estado"] == "cerrada"
+        assert repo.alertas[aid]["desenlace"] == "falso_positivo"
+        assert repo.alertas[aid]["fecha_cierre"] is not None
+
+    def test_filtra_confirmadas_y_falsos_positivos(self, client, repo):
+        confirmada = _alerta(repo, "cerrada")
+        repo.alertas[confirmada]["desenlace"] = "confirmada"
+        falso = _alerta(repo, "cerrada", tipo="arma_blanca")
+        repo.alertas[falso]["desenlace"] = "falso_positivo"
+        _alerta(repo, "notificada")
+        entrar_como(client, "guardia")
+        html = client.get("/alertas?estado=confirmadas").get_data(as_text=True)
+        assert f"#{confirmada}" in html and f"#{falso}<" not in html
+        html = client.get("/alertas?estado=falsos").get_data(as_text=True)
+        assert "Falso positivo" in html and f"#{confirmada}<" not in html
+        html = client.get("/alertas?tipo=arma_blanca").get_data(as_text=True)
+        assert f"#{falso}" in html
+
+    def test_las_pestanas_del_panel_filtran_las_abiertas(self, client, repo):
+        escalada = _alerta(repo, "escalada")
+        nueva = _alerta(repo, "notificada")
+        entrar_como(client, "guardia")
+        html = client.get("/panel/alertas?ver=escaladas").get_data(as_text=True)
+        assert f'id="alerta-{escalada}"' in html
+        assert f'id="alerta-{nueva}"' not in html
+        assert "Alertas abiertas (2)" in html          # el total no cambia
+
+    def test_la_bitacora_es_solo_del_administrador(self, client, repo):
+        repo.registrar_auditoria(1, "ver_evidencia", "alerta_arma", 3)
+        entrar_como(client, "guardia")
+        assert client.get("/bitacora").status_code == 403
+        entrar_como(client, "administrador")
+        html = client.get("/bitacora").get_data(as_text=True)
+        assert "Ver evidencia" in html

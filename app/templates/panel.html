@@ -10,7 +10,7 @@
 {% block contenido %}
 <div class="rejilla-panel">
   <div class="columna-principal">
-    <div id="zona-alertas" data-url="{{ url_for('web.panel_alertas') }}"
+    <div id="zona-alertas" data-url="{{ url_for('web.panel_alertas', ver=ver) if ver != 'todas' else url_for('web.panel_alertas') }}"
          data-segundos="{{ segundos_refresco }}">
       {% include "_alertas.html" %}
     </div>

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block titulo %}Bitácora | FaceGuard{% endblock %}
+{% block miga %}Administración{% endblock %}
+{% block encabezado %}Bitácora de auditoría{% endblock %}
+{% block acciones_superiores %}
+<span class="pastilla gris">últimos {{ registros|length }} registros</span>
+{% endblock %}
+
+{% block contenido %}
+<p class="lead-pagina">Cada inicio de sesión, consulta, atención de alerta, acceso a evidencia y
+   acceso denegado queda registrado con su autor y su hora (tabla <code>auditoria</code>).</p>
+
+<section class="tarjeta sin-relleno">
+  {% if registros %}
+  <div class="tabla-envoltura">
+  <table>
+    <thead>
+      <tr><th>Fecha y hora</th><th>Usuario</th><th>Acción</th><th>Sobre</th><th>Detalle</th></tr>
+    </thead>
+    <tbody>
+      {% for r in registros %}
+      <tr>
+        <td class="mono">{{ r.fecha_hora|fecha_corta }}:{{ r.fecha_hora.strftime('%S') if r.fecha_hora else '' }}</td>
+        <td>{{ r.usuario or ('Estación de captura' if not r.usuario_id else '') }}</td>
+        <td><span class="pastilla {{ 'rojo' if 'denegado' in r.accion or 'fallido' in r.accion else ('azul' if 'alerta' in r.accion else 'gris') }}">{{ r.accion|replace('_', ' ')|capitalize }}</span></td>
+        <td class="mono">{{ r.entidad or '' }}{% if r.entidad_id %} #{{ r.entidad_id }}{% endif %}</td>
+        <td>{{ r.detalle or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="vacio">Todavía no hay registros.</p>
+  {% endif %}
+</section>
+{% endblock %}

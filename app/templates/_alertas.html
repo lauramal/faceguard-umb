@@ -1,8 +1,19 @@
 <section class="alertas-panel">
   <div class="seccion-cabecera">
     <h2>Alertas abiertas ({{ alertas|length }})</h2>
-    {% if alertas %}<span class="pastilla rojo suave">{{ alertas|length }} por gestionar</span>{% endif %}
+    <a class="enlace" href="{{ url_for('web.seguimiento_alertas') }}">Seguimiento e historial</a>
   </div>
+
+  {% if alertas %}
+  <nav class="pestanas" aria-label="Filtrar alertas abiertas">
+    {% for p in pestanas %}
+    <a href="{{ url_for('web.panel', ver=p.clave) if p.clave != 'todas' else url_for('web.panel') }}"
+       class="pestana {{ 'activa' if p.clave == ver }} {{ 'urgente' if p.clave == 'escaladas' and p.cuenta }}">
+      {{ p.nombre }} <span class="cuenta">{{ p.cuenta }}</span>
+    </a>
+    {% endfor %}
+  </nav>
+  {% endif %}
 
   {% if not alertas %}
   <div class="tarjeta vacio-grande">
@@ -10,16 +21,21 @@
     <strong>Todo en orden</strong>
     <p>No hay alertas abiertas. Las nuevas detecciones aparecerán aquí automáticamente.</p>
   </div>
+  {% elif not visibles %}
+  <div class="tarjeta vacio-grande">
+    <strong>No hay alertas en esta pestaña</strong>
+    <p>Las demás siguen en <a href="{{ url_for('web.panel') }}">Todas</a>.</p>
+  </div>
   {% else %}
   <ul class="lista-alertas">
-    {% for a in alertas %}
+    {% for a in visibles %}
     {% set nombre_arma = 'Arma de fuego' if a.tipo_arma == 'arma_fuego' else ('Arma blanca' if a.tipo_arma == 'arma_blanca' else 'Arma') %}
-    <li class="alerta estado-{{ a.estado }}">
+    <li class="alerta estado-{{ a.estado }}" id="alerta-{{ a.alerta_id }}">
       <div class="alerta-icono"><svg><use href="#i-alerta"/></svg></div>
 
       <div class="alerta-cuerpo">
         <div class="cabecera-alerta">
-          <strong class="alerta-titulo">{{ nombre_arma }}</strong>
+          <strong class="alerta-titulo">{{ nombre_arma }} <span class="numero">#{{ a.alerta_id }}</span></strong>
           <span class="pastilla estado">{{ a.estado|replace('_', ' ')|capitalize }}</span>
           {% if a.estado == 'escalada' %}<span class="pastilla urgente">escalada al administrador</span>{% endif %}
           <time class="alerta-hora">{{ a.fecha_hora|fecha_corta }}</time>

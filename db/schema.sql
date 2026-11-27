@@ -200,6 +200,11 @@ CREATE TABLE alerta_arma (
     atendida_por        INTEGER REFERENCES usuario(id),
     fecha_atencion      TIMESTAMP,
     fecha_escalamiento  TIMESTAMP,
+    -- Como termino la alerta. 'cerrada' es el estado final de todas, asi que
+    -- el desenlace se guarda aparte para filtrar y hacer seguimiento.
+    desenlace           VARCHAR(20)
+                        CHECK (desenlace IN ('confirmada','falso_positivo')),
+    fecha_cierre        TIMESTAMP,
     CONSTRAINT atencion_con_responsable
         CHECK (estado NOT IN ('en_atencion','confirmada','falso_positivo')
                OR atendida_por IS NOT NULL),
@@ -255,6 +260,10 @@ SELECT a.id                AS alerta_id,
        a.imagen_url,
        a.camara_id,
        a.fecha_escalamiento,
+       a.fecha_atencion,
+       a.desenlace,
+       a.fecha_cierre,
+       u.nombre            AS atendida_por_nombre,
        pa.nombre           AS punto_acceso,
        r.id                AS registro_acceso_id,
        r.resultado         AS resultado_identificacion,
@@ -272,7 +281,8 @@ FROM alerta_arma a
 JOIN punto_acceso pa          ON pa.id = a.punto_acceso_id
 LEFT JOIN registro_acceso r   ON r.id  = a.registro_acceso_id
 LEFT JOIN persona pc          ON pc.id = a.persona_contexto_id
-LEFT JOIN persona pp          ON pp.id = a.portador_id;
+LEFT JOIN persona pp          ON pp.id = a.portador_id
+LEFT JOIN usuario u           ON u.id  = a.atendida_por;
 
 -- ----------------------------------------------------------------------------
 -- Datos iniciales
